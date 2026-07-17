@@ -30,6 +30,7 @@
     </section>
 
     <section id="sky" class="sky" aria-label="从天而降的外卖接取区域">
+      <canvas id="skyCanvas" class="sky-canvas" aria-hidden="true"></canvas>
       <div class="sky-title"><strong id="skyPrompt">点击接住外卖</strong><span id="fallCount">天空中 0 份</span></div>
       <div class="cloud cloud-one"></div><div class="cloud cloud-two"></div>
       <div class="drop-lanes"><i></i><i></i><i></i></div>
@@ -51,7 +52,9 @@
     <section class="bag-viewport">
       <div class="bag-stage">
         <div class="bag-topline"><span id="bagTitle">4×4 配送背包</span><b id="bagGuide">点绿色 + 放下</b></div>
-        <div id="backpack" class="backpack" role="grid" aria-label="四乘四配送背包"></div>
+        <div id="backpack" class="backpack" role="grid" aria-label="四乘四配送背包">
+          <canvas id="bagCanvas" class="bag-canvas" aria-label="拖动、摆放与合成食物"></canvas>
+        </div>
       </div>
     </section>
 
@@ -63,6 +66,8 @@
     </nav>
   </main>
 
+  <canvas id="dragCanvas" class="drag-canvas" aria-hidden="true"></canvas>
+
   <div id="toast" class="toast" role="status" aria-live="assertive"></div>
 
   <div id="startModal" class="modal-backdrop">
@@ -70,9 +75,9 @@
       <p class="modal-kicker">首次上岗</p>
       <h2 id="startTitle">接住、合成、装进背包</h2>
       <div class="tutorial-steps">
-        <article><b>1</b><strong>先点天空中的包裹</strong><span>接住后先别慌，背包会标出能放的位置</span></article>
-        <article><b>2</b><strong>点背包里的绿色“+”</strong><span>大件会自动贴齐格线；没有连续空间会说明原因</span></article>
-        <article><b>3</b><strong>手持时点发光食物合成</strong><span>绿光一定能合成；红色“!”会告诉你还差什么空间</span></article>
+        <article><b>1</b><strong>按住空中的包裹</strong><span>直接往背包拖；轻点接住也可以</span></article>
+        <article><b>2</b><strong>松手吸附到绿色格</strong><span>大件自动贴齐；无空间时会明确告诉你</span></article>
+        <article><b>3</b><strong>拖到发光食物上合成</strong><span>绿色一定成功；红色“!”代表需要先整理</span></article>
       </div>
       <button id="startButton" class="primary-button">开始第一班</button>
       <p class="modal-note">游戏中不需要上下滚动，订单、天空、手持物和背包会同时显示。</p>
@@ -128,6 +133,7 @@
     </section>
   </div>
 
+  <script src="renderer.js"></script>
   <script src="game.js"></script>
 </body>
 </html>
