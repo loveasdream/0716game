@@ -31,40 +31,72 @@ const RECIPES = [
 ];
 
 const CATCHABLE = ["bread", "beefPatty", "cheese", "cola", "milkTea", "cream", "chicken"];
-const INITIAL_ORDERS = ["burgerPatty", "chickenBucket", "bigTea"];
+const INITIAL_ORDERS = ["bigTea", "bigTea", "bigTea"];
 const ORDER_POOL = [
   { type: "burgerPatty", level: 1 }, { type: "chickenBucket", level: 1 }, { type: "bigTea", level: 1 },
   { type: "cheeseBurger", level: 2 }, { type: "foamTea", level: 2 },
   { type: "cheeseCombo", level: 3 }, { type: "wholeChicken", level: 3 }
+];
+const LEVEL_CONFIGS = {
+  1: {
+    orders: ["bigTea", "bigTea", "bigTea"],
+    drops: ["milkTea", "milkTea", "milkTea", "milkTea", "milkTea", "milkTea", "cream"],
+    title: "奶茶练习班"
+  },
+  2: {
+    orders: ["chickenBucket", "bigTea", "burgerPatty"],
+    drops: ["chicken", "chicken", "milkTea", "milkTea", "bread", "beefPatty", "chicken", "chicken"],
+    title: "旋转整理班"
+  },
+  3: {
+    orders: ["burgerPatty", "chickenBucket", "bigTea"],
+    drops: ["bread", "beefPatty", "chicken", "chicken", "milkTea", "milkTea", "cheese", "cola", "cream"],
+    title: "午高峰综合班"
+  }
+};
+const WAVES = [
+  { id: "prep", name: "备餐期", from: 0, spawn: 1.8, fall: 1.08, maxDrops: 2 },
+  { id: "rush", name: "午高峰", from: 12, spawn: 1.28, fall: .91, maxDrops: 3 },
+  { id: "sprint", name: "冲单期", from: 30, spawn: .98, fall: .78, maxDrops: 4 }
 ];
 const state = {
   items: [], orders: [], falling: new Map(), hand: null, selectedId: null,
   level: 1, quota: 3, delivered: 0, coins: 0, shiftIncome: 0,
   insulation: 0, maxFresh: 3, uid: 1, dropUid: 1,
   running: false, paused: true, locked: false, sound: true,
-  lastMessage: "点击上方正在掉落的包裹",
-  scriptedDrops: ["bread", "beefPatty", "chicken", "chicken", "milkTea", "milkTea", "cheese", "cola", "cream"],
-  drag: null, suppressClick: false, theme: "warm", actionCount: 0, guideStep: 0
+  lastMessage: "按住上方包裹，直接拖进背包",
+  scriptedDrops: [...LEVEL_CONFIGS[1].drops],
+  bagGesture: null, catchDrag: null, preview: null, dragValidity: null,
+  suppressClick: false, theme: "warm", actionCount: 0, guideStep: 0,
+  shiftElapsed: 0, nextSpawnIn: 0, waveId: "prep", lastFrame: 0, lastClockSecond: -1
 };
 
 const $ = (selector) => document.querySelector(selector);
 const backpack = $("#backpack");
 const sky = $("#sky");
 const toast = $("#toast");
-let spawnTimer = null;
 let toastTimer = null;
 let audioContext = null;
+let renderer = null;
+const spriteCache = new Map();
 
 function init() {
   loadProgress();
   buildGrid();
-  state.orders = INITIAL_ORDERS.map((type, index) => createOrder(type, index));
+  configureLevel(1);
+  renderer = window.createCanvasRenderer({
+    skyCanvas: $("#skyCanvas"), bagCanvas: $("#bagCanvas"), dragCanvas: $("#dragCanvas"),
+    getState: () => state, getFood: (type) => FOOD[type],
+    getShape: (type, rotation, override) => override || shapeFor(type, rotation),
+    getItemCells: (item) => itemCells(item), canPlace, recipeFor, findMergePlacement,
+    getSprite: foodSprite, grid: GRID
+  });
   bindEvents();
   renderRecipes();
   render();
-  spawnTimer = window.setInterval(spawnDrop, 1550);
   document.body.dataset.theme = state.theme;
   updateThemeButtons();
+  window.requestAnimationFrame(gameLoop);
 }
 
 function loadProgress() {
@@ -85,24 +117,11 @@ function saveProgress() {
 }
 
 function buildGrid() {
-  backpack.innerHTML = "";
-  for (let y = 0; y < GRID; y += 1) {
-    for (let x = 0; x < GRID; x += 1) {
-      const cell = document.createElement("button");
-      cell.type = "button";
-      cell.className = "grid-cell";
-      cell.dataset.x = x;
-      cell.dataset.y = y;
-      cell.style.left = `${x * 25}%`;
-      cell.style.top = `${y * 25}%`;
-      cell.setAttribute("aria-label", `背包第${y + 1}行第${x + 1}列`);
-      backpack.appendChild(cell);
-    }
-  }
+  $("#bagCanvas").setAttribute("aria-label", "四乘四配送背包，可拖动食物整理或合成");
 }
 
 function bindEvents() {
-  backpack.addEventListener("click", onBackpackClick);
+  sky.addEventListener("pointerdown", onSkyPointerDown);
   backpack.addEventListener("pointerdown", onItemPointerDown);
   window.addEventListener("pointermove", onItemPointerMove, { passive: false });
   window.addEventListener("pointerup", onItemPointerUp);
@@ -131,7 +150,7 @@ function bindEvents() {
     if (event.key === "Escape") { closeModals(); cancelCurrent(); }
     if (event.code === "Space" && state.running && !state.paused) {
       event.preventDefault();
-      const lowest = [...state.falling.values()].sort((a, b) => b.element.getBoundingClientRect().top - a.element.getBoundingClientRect().top)[0];
+      const lowest = [...state.falling.values()].sort((a, b) => b.progress - a.progress)[0];
       if (lowest) catchDrop(lowest.id);
     }
   });
@@ -145,12 +164,14 @@ function startGame() {
   $("#startModal").hidden = true;
   if (!state.running) {
     state.running = true;
+    state.shiftElapsed = 0;
+    state.nextSpawnIn = .85;
+    state.waveId = "prep";
     setPaused(false);
     spawnDrop();
-    window.setTimeout(spawnDrop, 900);
   }
   setPaused(false);
-  showToast("包裹开始降落！点中它就能接住", "good");
+  showToast("按住包裹直接拖进背包，轻点接住也可以", "good");
   playTone(620, .08);
   window.setTimeout(() => mobileFocus(sky), 120);
 }
@@ -164,30 +185,68 @@ function anyModalOpen() {
   return [...document.querySelectorAll(".modal-backdrop")].some((modal) => !modal.hidden);
 }
 
+function configureLevel(level) {
+  const config = LEVEL_CONFIGS[level];
+  state.quota = level <= 3 ? 3 : Math.min(7, 3 + Math.floor((level - 1) / 2));
+  const orderTypes = config?.orders || [chooseOrder(), chooseOrder(), chooseOrder()];
+  state.orders = orderTypes.map((type, index) => createOrder(type, `${level}-${index}`));
+  state.scriptedDrops = [...(config?.drops || [])];
+  state.shiftElapsed = 0;
+  state.nextSpawnIn = .75;
+  state.waveId = "prep";
+  state.lastClockSecond = -1;
+}
+
+function currentWave() {
+  return [...WAVES].reverse().find((wave) => state.shiftElapsed >= wave.from) || WAVES[0];
+}
+
+function gameLoop(now) {
+  const elapsed = state.lastFrame ? Math.min(.05, (now - state.lastFrame) / 1000) : 0;
+  state.lastFrame = now;
+  if (state.running && !state.paused && !state.locked) {
+    const timeScale = state.catchDrag ? .18 : 1;
+    const dt = elapsed * timeScale;
+    state.shiftElapsed += dt;
+    state.nextSpawnIn -= dt;
+    const missed = [];
+    state.falling.forEach((drop) => {
+      drop.progress += dt / drop.duration;
+      if (drop.progress >= 1) missed.push(drop.id);
+    });
+    missed.forEach((id) => removeDrop(id, true));
+    const wave = currentWave();
+    if (wave.id !== state.waveId) {
+      state.waveId = wave.id;
+      showToast(wave.id === "sprint" ? "冲单期！外卖加速，稳住背包" : "午高峰来了！掉落开始加快", wave.id === "sprint" ? "bad" : "good");
+      playTone(wave.id === "sprint" ? 880 : 720, .09);
+      haptic(22);
+    }
+    if (state.nextSpawnIn <= 0) {
+      spawnDrop();
+      state.nextSpawnIn = wave.spawn;
+    }
+    const second = Math.floor(state.shiftElapsed);
+    if (second !== state.lastClockSecond) {
+      state.lastClockSecond = second;
+      renderPressure();
+    }
+  }
+  renderer?.frame(now);
+  window.requestAnimationFrame(gameLoop);
+}
+
 function spawnDrop() {
-  if (!state.running || state.paused || state.locked || state.falling.size >= 4) return;
+  const wave = currentWave();
+  if (!state.running || state.paused || state.locked || state.falling.size >= wave.maxDrops) return;
   const type = state.scriptedDrops.length ? state.scriptedDrops.shift() : chooseHelpfulDrop();
   const id = `drop-${state.dropUid++}`;
   const laneLoads = [0, 1, 2].map((lane) => [...state.falling.values()].filter((drop) => drop.lane === lane).length);
   const lightest = Math.min(...laneLoads);
   const possibleLanes = laneLoads.map((load, lane) => load === lightest ? lane : -1).filter((lane) => lane >= 0);
   const lane = possibleLanes[Math.floor(Math.random() * possibleLanes.length)];
-  const element = document.createElement("button");
-  element.type = "button";
-  element.className = "falling-item";
-  element.dataset.dropId = id;
-  element.style.setProperty("--lane", lane);
-  const fallSeconds = Math.max(4.35, 6.1 - state.level * .16 + Math.random() * .7);
-  element.style.setProperty("--duration", `${fallSeconds}s`);
-  element.setAttribute("aria-label", `接住正在降落的${FOOD[type].name}`);
-  element.innerHTML = `<span class="parachute"></span><span class="parcel">${foodArtMarkup(type)}</span><span class="falling-name">${FOOD[type].name}</span>`;
-  element.addEventListener("click", () => catchDrop(id));
-  element.addEventListener("animationend", (event) => {
-    if (event.animationName === "drop" && state.falling.has(id)) removeDrop(id, true);
-  });
-  sky.appendChild(element);
-  state.falling.set(id, { id, type, lane, element });
-  paintSprites(element);
+  const fallSeconds = Math.max(3.65, (6.25 - state.level * .13 + Math.random() * .55) * wave.fall);
+  state.falling.set(id, { id, type, lane, progress: 0, duration: fallSeconds });
   renderFallCount();
 }
 
@@ -196,25 +255,28 @@ function removeDrop(id, missed = false) {
   if (!drop) return;
   state.falling.delete(id);
   if (missed) {
-    drop.element.remove();
     const label = $("#missedLabel");
     label.textContent = `放过了${FOOD[drop.type].name} · 不扣分`;
     window.setTimeout(() => { label.textContent = "不需要的可以放过"; }, 1100);
-  } else {
-    drop.element.classList.add("caught");
-    window.setTimeout(() => drop.element.remove(), 270);
   }
   renderFallCount();
 }
 
-function catchDrop(id) {
+function onSkyPointerDown(event) {
+  if (!state.running || state.paused || state.locked) return;
+  const drop = renderer?.skyDropAt(event.clientX, event.clientY);
+  if (!drop) return;
+  event.preventDefault();
+  catchDrop(drop.id, event);
+}
+
+function catchDrop(id, gesture = null) {
   if (!state.running || state.paused || state.locked) return;
   const drop = state.falling.get(id);
   if (!drop) return;
   if (state.hand) {
-    drop.element.classList.remove("denied");
-    requestAnimationFrame(() => drop.element.classList.add("denied"));
     showToast(`手里已经拿着${FOOD[state.hand.type].name}，先放下或合成`, "bad");
+    bump(sky);
     playTone(120, .08);
     return;
   }
@@ -223,8 +285,13 @@ function catchDrop(id) {
   state.guideStep = Math.max(state.guideStep, 1);
   state.selectedId = null;
   removeDrop(id, false);
-  showToast(`接住${FOOD[drop.type].name}！现在点背包里的绿色“+”`, "good");
+  if (gesture) {
+    state.catchDrag = { pointerId: gesture.pointerId, x: gesture.clientX, y: gesture.clientY, startX: gesture.clientX, startY: gesture.clientY };
+    state.dragValidity = null;
+  }
+  showToast(gesture ? `接住${FOOD[drop.type].name}！拖到绿色格松手` : `接住${FOOD[drop.type].name}！点绿色“+”放下`, "good");
   playTone(520, .07);
+  haptic(12);
   render();
   window.setTimeout(() => mobileFocus(backpack), 80);
 }
@@ -344,22 +411,6 @@ function recipeFor(a, b) {
   return RECIPES.find((recipe) => (recipe.a === a && recipe.b === b) || (recipe.a === b && recipe.b === a));
 }
 
-function onBackpackClick(event) {
-  if (state.suppressClick || state.locked || state.paused) return;
-  const itemElement = event.target.closest(".bag-item");
-  if (itemElement) {
-    const item = state.items.find((candidate) => candidate.id === itemElement.dataset.id);
-    if (item) handleItemClick(item);
-    return;
-  }
-  const cell = event.target.closest(".grid-cell");
-  if (!cell) return;
-  const x = Number(cell.dataset.x);
-  const y = Number(cell.dataset.y);
-  if (state.hand) placeHand(x, y);
-  else if (state.selectedId) moveSelected(x, y);
-}
-
 function handleItemClick(item) {
   if (state.hand) {
     attemptHandMerge(item);
@@ -388,6 +439,7 @@ function handleItemClick(item) {
 
 function placeHand(x, y) {
   if (!state.hand) return;
+  clearPreview();
   let placement = { x, y, rotation: state.hand.rotation };
   let snapped = false;
   if (!canPlace(state.hand.type, x, y, state.hand.rotation)) {
@@ -411,6 +463,7 @@ function placeHand(x, y) {
   state.lastMessage = `${name}已放入背包`;
   showToast(snapped ? `${name}已自动贴齐最近的绿色格` : `${name}已放入背包；拖动可以整理`, "good");
   playTone(370, .05);
+  haptic(10);
   render();
   window.setTimeout(() => mobileFocus(sky), 90);
 }
@@ -446,6 +499,8 @@ function attemptHandMerge(target) {
   state.lastMessage = `刚合成：${FOOD[result.type].name}`;
   showToast(`${handName}直接合成成功：${FOOD[result.type].name}！鲜度回满`, "good");
   playMergeSound();
+  haptic(28);
+  clearPreview();
   render();
   animateItem(result.id);
   window.setTimeout(() => mobileFocus(sky), 90);
@@ -470,6 +525,8 @@ function mergeBagItems(first, second, resultType) {
   state.lastMessage = `刚合成：${FOOD[resultType].name}`;
   showToast(`合成成功：${FOOD[resultType].name}！鲜度回满`, "good");
   playMergeSound();
+  haptic(28);
+  clearPreview();
   render();
   animateItem(result.id);
 }
@@ -512,70 +569,146 @@ function moveSelected(x, y) {
 }
 
 function onItemPointerDown(event) {
-  if (state.hand || state.paused || state.locked || event.button !== 0) return;
-  const element = event.target.closest(".bag-item");
-  if (!element) return;
-  const item = state.items.find((candidate) => candidate.id === element.dataset.id);
-  if (!item || item.type === "badReview") return;
-  const rect = backpack.getBoundingClientRect();
-  state.drag = { pointerId: event.pointerId, itemId: item.id, element, startX: event.clientX, startY: event.clientY, dx: 0, dy: 0, moved: false, cellSize: rect.width / GRID };
-  event.target.setPointerCapture?.(event.pointerId);
+  if (state.paused || state.locked || event.button !== 0 || state.catchDrag) return;
+  const point = renderer?.bagPoint(event.clientX, event.clientY);
+  if (!point?.inside) return;
+  const item = renderer.itemAtPoint(event.clientX, event.clientY);
+  state.bagGesture = {
+    pointerId: event.pointerId, itemId: item?.id || null,
+    startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY,
+    moved: false, cellSize: point.cellSize
+  };
+  event.preventDefault();
 }
 
 function onItemPointerMove(event) {
-  if (!state.drag || event.pointerId !== state.drag.pointerId) return;
-  const drag = state.drag;
-  drag.dx = event.clientX - drag.startX;
-  drag.dy = event.clientY - drag.startY;
-  if (!drag.moved && Math.hypot(drag.dx, drag.dy) < 7) return;
-  drag.moved = true;
+  if (state.catchDrag && event.pointerId === state.catchDrag.pointerId) {
+    event.preventDefault();
+    state.catchDrag.x = event.clientX;
+    state.catchDrag.y = event.clientY;
+    previewHandAt(event.clientX, event.clientY);
+    return;
+  }
+  const gesture = state.bagGesture;
+  if (!gesture || event.pointerId !== gesture.pointerId) return;
   event.preventDefault();
-  drag.element.classList.add("dragging");
-  drag.element.style.transform = `translate(${drag.dx}px,${drag.dy}px)`;
-  const item = state.items.find((candidate) => candidate.id === drag.itemId);
-  if (!item) return;
-  const x = Math.round(item.x + drag.dx / drag.cellSize);
-  const y = Math.round(item.y + drag.dy / drag.cellSize);
+  gesture.x = event.clientX;
+  gesture.y = event.clientY;
+  const distance = Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY);
+  if (state.hand) {
+    gesture.moved = distance > 4;
+    previewHandAt(event.clientX, event.clientY);
+    return;
+  }
+  const item = state.items.find((candidate) => candidate.id === gesture.itemId);
+  if (!item || item.type === "badReview" || distance < 7) return;
+  gesture.moved = true;
+  const mergeTarget = renderer.itemAtPoint(event.clientX, event.clientY);
+  const mergeRecipe = mergeTarget && mergeTarget.id !== item.id && recipeFor(item.type, mergeTarget.type);
+  if (mergeRecipe) {
+    gesture.mergeTargetId = mergeTarget.id;
+    gesture.mergeResult = mergeRecipe.result;
+    const placement = findMergePlacement(mergeRecipe.result, [item, mergeTarget]);
+    state.dragValidity = Boolean(placement);
+    if (placement) showPreview(mergeRecipe.result, placement.x, placement.y, placement.rotation, [item.id, mergeTarget.id]);
+    else {
+      const best = bestBlockedPlacement(mergeRecipe.result, [item, mergeTarget]);
+      if (best) showPreview(mergeRecipe.result, best.x, best.y, best.rotation, [item.id, mergeTarget.id]);
+    }
+    return;
+  }
+  gesture.mergeTargetId = null;
+  gesture.mergeResult = null;
+  const x = Math.round(item.x + (event.clientX - gesture.startX) / gesture.cellSize);
+  const y = Math.round(item.y + (event.clientY - gesture.startY) / gesture.cellSize);
   showPreview(item.type, x, y, item.rotation, [item.id], item.shapeOverride);
 }
 
 function onItemPointerUp(event) {
-  if (!state.drag || event.pointerId !== state.drag.pointerId) return;
-  const drag = state.drag;
-  const item = state.items.find((candidate) => candidate.id === drag.itemId);
-  if (drag.moved && item) {
-    const x = Math.round(item.x + drag.dx / drag.cellSize);
-    const y = Math.round(item.y + drag.dy / drag.cellSize);
+  if (state.catchDrag && event.pointerId === state.catchDrag.pointerId) {
+    const point = renderer.bagPoint(event.clientX, event.clientY);
+    const target = point.inside ? renderer.itemAtPoint(event.clientX, event.clientY) : null;
+    state.catchDrag = null;
+    state.dragValidity = null;
+    clearPreview();
+    if (point.inside) {
+      if (target && recipeFor(state.hand.type, target.type)) attemptHandMerge(target);
+      else placeHand(point.x, point.y);
+    } else {
+      state.lastMessage = `${FOOD[state.hand.type].name}已接到手中`;
+      showToast(`已接住${FOOD[state.hand.type].name}，点绿色“+”放下`, "good");
+      render();
+    }
+    return;
+  }
+  const gesture = state.bagGesture;
+  if (!gesture || event.pointerId !== gesture.pointerId) return;
+  const point = renderer.bagPoint(event.clientX, event.clientY);
+  const target = point.inside ? renderer.itemAtPoint(event.clientX, event.clientY) : null;
+  state.bagGesture = null;
+  state.dragValidity = null;
+  clearPreview();
+  if (state.hand) {
+    if (target) attemptHandMerge(target);
+    else if (point.inside) placeHand(point.x, point.y);
+    return;
+  }
+  const item = state.items.find((candidate) => candidate.id === gesture.itemId);
+  if (gesture.moved && item) {
+    const mergeTarget = state.items.find((candidate) => candidate.id === gesture.mergeTargetId);
+    if (mergeTarget && gesture.mergeResult) {
+      mergeBagItems(item, mergeTarget, gesture.mergeResult);
+      return;
+    }
+    const x = Math.round(item.x + (event.clientX - gesture.startX) / gesture.cellSize);
+    const y = Math.round(item.y + (event.clientY - gesture.startY) / gesture.cellSize);
     if (canPlace(item.type, x, y, item.rotation, [item.id], item.shapeOverride)) {
       item.x = x;
       item.y = y;
       state.selectedId = item.id;
-      showToast("拖动整理完成（不消耗鲜度）");
+      showToast("吸附完成（整理不消耗鲜度）", "good");
       playTone(290, .04);
+      haptic(8);
     } else {
-      showToast("那里放不下，食物弹回原位", "bad");
+      showToast("那里放不下，食物已弹回原位", "bad");
       playTone(120, .07);
     }
-    state.suppressClick = true;
-    window.setTimeout(() => { state.suppressClick = false; }, 0);
+    render();
+  } else if (item) handleItemClick(item);
+  else if (point.inside && state.selectedId) moveSelected(point.x, point.y);
+}
+
+function previewHandAt(clientX, clientY) {
+  if (!state.hand) return;
+  const point = renderer.bagPoint(clientX, clientY);
+  if (!point.inside) {
+    state.dragValidity = null;
+    clearPreview();
+    return;
   }
-  clearPreview();
-  state.drag = null;
-  render();
+  const target = renderer.itemAtPoint(clientX, clientY);
+  const recipe = target && recipeFor(state.hand.type, target.type);
+  if (recipe) {
+    const placement = findMergePlacement(recipe.result, [target]);
+    state.dragValidity = Boolean(placement);
+    if (placement) showPreview(recipe.result, placement.x, placement.y, placement.rotation, [target.id]);
+    else {
+      const best = bestBlockedPlacement(recipe.result, [target]);
+      if (best) showPreview(recipe.result, best.x, best.y, best.rotation, [target.id]);
+    }
+    return;
+  }
+  showPreview(state.hand.type, point.x, point.y, state.hand.rotation, []);
 }
 
 function showPreview(type, x, y, rotation, ignoreIds, shapeOverride = null) {
-  clearPreview();
   const valid = canPlace(type, x, y, rotation, ignoreIds, shapeOverride);
-  const cells = (shapeOverride || shapeFor(type, rotation)).map(([dx, dy]) => [x + dx, y + dy]);
-  cells.forEach(([cx, cy]) => {
-    const cell = backpack.querySelector(`.grid-cell[data-x="${cx}"][data-y="${cy}"]`);
-    if (cell) cell.classList.add(valid ? "preview-good" : "preview-bad");
-  });
+  state.preview = { type, x, y, rotation, ignoreIds, shapeOverride, valid };
+  state.dragValidity = valid;
 }
 
 function clearPreview() {
-  backpack.querySelectorAll(".preview-good,.preview-bad").forEach((cell) => cell.classList.remove("preview-good", "preview-bad"));
+  state.preview = null;
 }
 
 function rotateCurrent() {
@@ -641,7 +774,8 @@ function deliverOrder(orderId) {
     bump($("#ordersList"));
     return;
   }
-  const payout = FOOD[item.type].value;
+  const waveBonus = currentWave().id === "sprint" ? 1.25 : 1;
+  const payout = Math.round(FOOD[item.type].value * waveBonus);
   const upgraded = item.type !== order.type;
   state.items = state.items.filter((candidate) => candidate.id !== item.id);
   state.selectedId = null;
@@ -652,8 +786,9 @@ function deliverOrder(orderId) {
   order.done = true;
   state.lastMessage = `已交付${FOOD[item.type].name}，收入 ¥${payout}`;
   saveProgress();
-  showToast(`${upgraded ? "高阶替代" : "精准"}送达！${FOOD[item.type].name}收入 ¥${payout}`, "good");
+  showToast(`${upgraded ? "高阶替代" : "精准"}送达！${FOOD[item.type].name}收入 ¥${payout}${waveBonus > 1 ? "（冲单加成）" : ""}`, "good");
   playTone(760, .08); window.setTimeout(() => playTone(960, .09), 70);
+  haptic(35);
   render();
   if (state.delivered >= state.quota) {
     state.locked = true;
@@ -664,7 +799,9 @@ function deliverOrder(orderId) {
     $("#resultText").textContent = `完成 ${state.quota} 单配送，背包里还剩 ${state.items.length} 件物品`;
     window.setTimeout(() => openModal("levelModal"), 420);
   } else {
-    window.setTimeout(() => {
+    const remainingNeed = state.quota - state.delivered;
+    const remainingVisible = state.orders.filter((candidate) => !candidate.done).length;
+    if (remainingNeed > remainingVisible) window.setTimeout(() => {
       const index = state.orders.indexOf(order);
       state.orders[index] = createOrder(chooseOrder(), `${Date.now()}-${index}`);
       render();
@@ -713,17 +850,19 @@ function nextLevel() {
   state.level += 1;
   state.delivered = 0;
   state.shiftIncome = 0;
-  state.quota = Math.min(7, 3 + Math.floor((state.level - 1) / 2));
   state.items = state.items.filter((item) => item.type !== "badReview");
-  state.orders = [0, 1, 2].map((index) => createOrder(chooseOrder(), `${state.level}-${index}`));
+  state.falling.clear();
   state.hand = null;
   state.selectedId = null;
+  state.catchDrag = null;
+  state.bagGesture = null;
+  clearPreview();
   state.locked = false;
-  state.scriptedDrops = [];
+  configureLevel(state.level);
   closeModals();
   setPaused(false);
   saveProgress();
-  showToast(`第 ${state.level} 班开始：本班目标 ${state.quota} 单`, "good");
+  showToast(`${LEVEL_CONFIGS[state.level]?.title || `第 ${state.level} 班`}开始：目标 ${state.quota} 单`, "good");
   playTone(630, .08);
   render();
 }
@@ -781,48 +920,30 @@ function renderHeader() {
 
 function renderOrders() {
   const list = $("#ordersList");
-  list.innerHTML = "";
+  const firstUndone = state.orders.findIndex((order) => !order.done);
   state.orders.forEach((order, index) => {
-    const ready = state.items.some((item) => item.timer > 0 && canFulfill(order.type, item.type));
+    const ready = !order.done && state.items.some((item) => item.timer > 0 && canFulfill(order.type, item.type));
     const upgrades = orderUpgrades(order.type).map((type) => FOOD[type].name).join(" / ");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `order-card${ready ? " ready" : ""}${order.done ? " done" : ""}`;
-    button.innerHTML = `<span class="order-art">${foodArtMarkup(order.type)}</span><span class="order-copy"><strong>${index + 1}. ${FOOD[order.type].name} ×1</strong><span>${shapeLabel(order.type)} · ${FOOD[order.type].desc}</span><span>${upgrades ? `可用高阶：${upgrades}` : "只收同款成品"}</span></span><b class="order-price">¥${FOOD[order.type].value}</b>`;
-    button.addEventListener("click", () => deliverOrder(order.id));
-    list.appendChild(button);
+    let button = list.children[index];
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.addEventListener("click", () => deliverOrder(button.dataset.orderId));
+      list.appendChild(button);
+    }
+    button.dataset.orderId = order.id;
+    button.className = `order-card${ready ? " ready" : ""}${order.done ? " done" : ""}${state.level <= 2 && index === firstUndone ? " focus-order" : ""}${state.level <= 2 && index > firstUndone && !order.done ? " queued" : ""}`;
+    const signature = `${order.type}-${order.done}-${index}`;
+    if (button.dataset.signature !== signature) {
+      button.dataset.signature = signature;
+      button.innerHTML = `<span class="order-art">${foodArtMarkup(order.type)}</span><span class="order-copy"><strong>${index + 1}. ${FOOD[order.type].name} ×1</strong><span>${shapeLabel(order.type)} · ${FOOD[order.type].desc}</span><span>${upgrades ? `可用高阶：${upgrades}` : "只收同款成品"}</span></span><b class="order-price">¥${FOOD[order.type].value}</b>`;
+    }
   });
+  while (list.children.length > state.orders.length) list.lastElementChild.remove();
 }
 
 function renderItems() {
-  backpack.querySelectorAll(".bag-item").forEach((element) => element.remove());
-  state.items.forEach((item) => {
-    const shape = itemShape(item);
-    const width = Math.max(...shape.map(([x]) => x)) + 1;
-    const height = Math.max(...shape.map(([, y]) => y)) + 1;
-    const selected = state.selectedId === item.id;
-    const handRecipe = state.hand && recipeFor(state.hand.type, item.type);
-    const mergeFits = handRecipe && Boolean(findMergePlacement(handRecipe.result, [item]));
-    const incompatible = state.hand && !handRecipe && item.type !== "badReview";
-    const element = document.createElement("button");
-    element.type = "button";
-    element.className = `bag-item${selected ? " selected" : ""}${handRecipe && mergeFits ? " compatible" : ""}${handRecipe && !mergeFits ? " merge-blocked" : ""}${incompatible ? " incompatible" : ""}${item.type === "badReview" ? " bad-review" : ""}`;
-    element.dataset.id = item.id;
-    element.style.left = `${item.x * 25}%`;
-    element.style.top = `${item.y * 25}%`;
-    element.style.width = `${width * 25}%`;
-    element.style.height = `${height * 25}%`;
-    element.setAttribute("aria-label", `${FOOD[item.type].name}${item.timer != null ? `，鲜度${item.timer}` : "，不可移动"}`);
-    const cells = shape.map(([x, y]) => `<span class="item-cell" style="left:${x / width * 100}%;top:${y / height * 100}%;width:${100 / width}%;height:${100 / height}%"></span>`).join("");
-    element.innerHTML = `${cells}<span class="item-main-art">${foodArtMarkup(item.type)}</span><span class="item-name">${FOOD[item.type].name}</span>${item.timer != null ? `<span class="fresh-badge${item.timer <= 1 ? " warning" : ""}">${item.timer}</span>` : ""}`;
-    backpack.appendChild(element);
-  });
-  backpack.querySelectorAll(".grid-cell").forEach((cell) => {
-    const x = Number(cell.dataset.x); const y = Number(cell.dataset.y);
-    const valid = Boolean(state.hand && canPlace(state.hand.type, x, y, state.hand.rotation));
-    cell.classList.toggle("hand-anchor", valid);
-    cell.setAttribute("aria-label", valid ? `点这里放下${FOOD[state.hand.type].name}` : `背包第${y + 1}行第${x + 1}列`);
-  });
+  renderer?.frame(performance.now());
 }
 
 function renderHand() {
@@ -854,7 +975,7 @@ function currentSituation() {
     if (ready) return {
       tone: "success", headline: `手持${FOOD[state.hand.type].name} · 可以合成`,
       subline: `背包中的${FOOD[ready.item.type].name}正在发绿光`,
-      hint: `点绿色“合” → ${FOOD[ready.recipe.result].name}（必定成功）`
+      hint: `拖到绿色“合”上松手 → ${FOOD[ready.recipe.result].name}`
     };
     if (matches.length) {
       const recipe = matches[0].recipe;
@@ -871,7 +992,7 @@ function currentSituation() {
       return {
         tone: "", headline: `手持${FOOD[state.hand.type].name} · 找绿色“+”`,
         subline: `${shapeLabel(state.hand.type)}，有${placements.length}个位置能放`,
-        hint: partners.length ? `现在点绿色“+”放下；遇到${partners.join("或")}可直接点它合成` : "现在点任意绿色“+”放进背包"
+        hint: partners.length ? `拖到绿色“+”松手；遇到${partners.join("或")}可直接合成` : "拖到任意绿色“+”松手放下"
       };
     }
     return {
@@ -907,7 +1028,7 @@ function currentSituation() {
   return {
     tone: "", headline: state.falling.size ? `天空正落下${state.falling.size}份外卖` : "下一份外卖马上到",
     subline: state.lastMessage,
-    hint: "只接订单需要的材料；不需要的放过去不会扣分",
+    hint: "按住包裹直接拖进背包；不需要的放过去不会扣分",
     badge: "—"
   };
 }
@@ -915,13 +1036,14 @@ function currentSituation() {
 function renderPressure() {
   const danger = state.items.find((item) => item.timer === 1);
   const situation = currentSituation();
+  const wave = currentWave();
   $(".game-screen").classList.toggle("danger", Boolean(danger));
   backpack.classList.toggle("awaiting-placement", Boolean(state.hand));
   $("#pressureStrip").classList.toggle("danger", Boolean(danger));
   $("#pressureStrip").textContent = danger
     ? `⚠ ${FOOD[danger.type].name}再接/合成1次就冷掉`
-    : `行动${state.actionCount} · 接取/合成会让已有食物-1`;
-  $("#skyPrompt").textContent = state.hand ? `先放下手里的${FOOD[state.hand.type].name}` : "点击接住外卖";
+    : `${wave.name} ${Math.floor(state.shiftElapsed)}秒 · 行动${state.actionCount}`;
+  $("#skyPrompt").textContent = state.hand ? `拖入绿色格放下${FOOD[state.hand.type].name}` : "按住包裹拖进背包";
   $("#bagGuide").textContent = situation.hint;
   $("#bagGuide").classList.toggle("danger", situation.tone === "blocked");
 }
@@ -951,7 +1073,8 @@ function shapeLabel(type) {
 }
 
 function targetElement(id) {
-  return backpack.querySelector(`.bag-item[data-id="${id}"]`) || backpack;
+  void id;
+  return backpack;
 }
 
 function mobileFocus(element) {
@@ -959,7 +1082,10 @@ function mobileFocus(element) {
 }
 
 function animateItem(id) {
-  requestAnimationFrame(() => targetElement(id)?.classList.add("pop"));
+  void id;
+  backpack.classList.remove("pop");
+  requestAnimationFrame(() => backpack.classList.add("pop"));
+  window.setTimeout(() => backpack.classList.remove("pop"), 300);
 }
 
 function openModal(id) {
@@ -980,6 +1106,7 @@ function closeModals() {
 function setTheme(theme) {
   state.theme = theme === "cyber" ? "cyber" : "warm";
   document.body.dataset.theme = state.theme;
+  renderer?.refreshPalette();
   updateThemeButtons();
   saveProgress();
   showToast(state.theme === "cyber" ? "正在预览霓虹夜送 · 纯外观" : "已换回暖阳小铺 · 纯外观", "good");
@@ -1029,6 +1156,10 @@ function playMergeSound() {
   window.setTimeout(() => playTone(880, .1), 75);
 }
 
+function haptic(duration = 12) {
+  try { navigator.vibrate?.(duration); } catch (_) { /* Haptics are optional. */ }
+}
+
 function playTone(frequency, duration) {
   if (!state.sound) return;
   try {
@@ -1046,6 +1177,16 @@ function playTone(frequency, duration) {
 
 function foodArtMarkup(type) {
   return `<span class="food-art" data-food="${type}"></span>`;
+}
+
+function foodSprite(type) {
+  if (spriteCache.has(type)) return spriteCache.get(type);
+  const canvas = document.createElement("canvas");
+  canvas.width = 16;
+  canvas.height = 16;
+  drawFood(canvas, type);
+  spriteCache.set(type, canvas);
+  return canvas;
 }
 
 function paintSprites(root) {
