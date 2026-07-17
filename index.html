@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#f3b85f" />
   <title>外卖落下来啦！</title>
-  <link rel="stylesheet" href="styles.css?v=20260717c" />
+  <link rel="stylesheet" href="styles.css?v=20260717h" />
 </head>
 <body data-theme="warm">
   <div class="screen-texture" aria-hidden="true"></div>
@@ -41,6 +41,7 @@
     </section>
 
     <section id="handTray" class="context-bar empty" aria-live="polite">
+      <div id="coachBadge" class="coach-badge" hidden>上岗教学 1/5</div>
       <div id="handVisual" class="hand-visual"><span class="empty-hand">✋</span></div>
       <div class="context-copy">
         <div id="handText" class="hand-text"><strong>手上是空的</strong><span>点击上方正在掉落的包裹</span></div>
@@ -73,13 +74,13 @@
   <div id="startModal" class="modal-backdrop">
     <section class="modal start-modal pixel-frame" role="dialog" aria-modal="true" aria-labelledby="startTitle">
       <p class="modal-kicker">首次上岗</p>
-      <h2 id="startTitle">接住、合成、装进背包</h2>
+      <h2 id="startTitle">30秒互动上岗训练</h2>
       <div class="tutorial-steps">
-        <article><b>1</b><strong>按住空中的包裹</strong><span>直接往背包拖；轻点接住也可以</span></article>
-        <article><b>2</b><strong>松手吸附到绿色格</strong><span>大件自动贴齐；无空间时会明确告诉你</span></article>
-        <article><b>3</b><strong>拖到发光食物上合成</strong><span>绿色一定成功；红色“!”代表需要先整理</span></article>
+        <article><b>1</b><strong>不用记规则</strong><span>游戏会一次只教一个动作</span></article>
+        <article><b>2</b><strong>跟着发光区域操作</strong><span>漏接不会卡死，会继续掉落教学材料</span></article>
+        <article><b>3</b><strong>亲手完成第一单</strong><span>接住、放置、合成、交单各做一次</span></article>
       </div>
-      <button id="startButton" class="primary-button">开始第一班</button>
+      <button id="startButton" class="primary-button">开始30秒上岗训练</button>
       <p class="modal-note">游戏中不需要上下滚动，订单、天空、手持物和背包会同时显示。</p>
     </section>
   </div>
@@ -90,11 +91,14 @@
       <p class="modal-kicker">DELIVERY STATION</p>
       <h2 id="menuTitle">配送站</h2>
       <div class="menu-actions">
+        <button id="levelsButton" class="menu-action"><i>▦</i><span><strong>配送地图</strong><small>选择关卡、补星与查看成长进度</small></span><b id="levelsStatus">1/10</b></button>
+        <button id="dailyButton" class="menu-action"><i>☀</i><span><strong>今日特送</strong><small>每天固定订单，只发一次首通奖励</small></span><b id="dailyStatus">¥30</b></button>
         <button id="upgradeButton" class="menu-action"><i>▥</i><span><strong>升级保温包</strong><small>以后接到和合成的食物鲜度 +1</small></span><b id="upgradeCost">¥20</b></button>
         <button id="eraserButton" class="menu-action"><i>✦</i><span><strong>差评橡皮</strong><small>清除背包中选中的完整差评块</small></span><b>¥12</b></button>
         <button id="themeButton" class="menu-action"><i>◈</i><span><strong>配送站外观</strong><small>暖阳小铺与霓虹夜送，纯外观</small></span><b>›</b></button>
         <button id="helpButton" class="menu-action"><i>?</i><span><strong>重新查看教学</strong><small>接取、合成与整理说明</small></span><b>›</b></button>
         <button id="shareButton" class="menu-action"><i>↗</i><span><strong>分享给朋友试玩</strong><small>发送当前成绩与网页链接</small></span><b>›</b></button>
+        <button id="reportButton" class="menu-action"><i>▤</i><span><strong>发送匿名试玩报告</strong><small>只记录接取、放置、合成和退出步骤</small></span><b>›</b></button>
       </div>
     </section>
   </div>
@@ -121,19 +125,32 @@
     </section>
   </div>
 
+  <div id="mapModal" class="modal-backdrop" hidden>
+    <section class="modal map-modal pixel-frame" role="dialog" aria-modal="true" aria-labelledby="mapTitle">
+      <button class="close-button" data-close-modal>×</button>
+      <p class="modal-kicker">DELIVERY ROUTE</p>
+      <h2 id="mapTitle">快餐篇 · 配送地图</h2>
+      <div id="careerSummary" class="career-summary"></div>
+      <button id="dailyMapButton" class="menu-action daily-map-button"><i>☀</i><span><strong>今日特送</strong><small>每日固定订单 · 可重复刷新星级</small></span><b>¥30</b></button>
+      <div id="levelGrid" class="level-grid"></div>
+      <p class="modal-note">每班完成即可获得1星；在目标时间内、全程无冷餐可各获得1星。选择关卡会结束当前班次并清空背包。</p>
+    </section>
+  </div>
+
   <div id="levelModal" class="modal-backdrop" hidden>
     <section class="modal result-modal pixel-frame" role="dialog" aria-modal="true">
-      <div class="result-star">★</div>
+      <div id="resultStars" class="result-star">★★★</div>
       <p class="modal-kicker">SHIFT COMPLETE</p>
       <h2>这一班全部送达！</h2>
       <p id="resultText">完成了 3 单配送</p>
+      <div id="resultGoals" class="result-goals"></div>
       <div class="result-stats"><span><small>本班收入</small><strong>¥<b id="shiftIncome">0</b></strong></span><span><small>过关奖励</small><strong>¥<b id="levelReward">15</b></strong></span></div>
       <button id="nextLevelButton" class="primary-button">继续下一班</button>
       <button id="resultShareButton" class="secondary-button">把成绩发给朋友</button>
     </section>
   </div>
 
-  <script src="renderer.js?v=20260717c"></script>
-  <script src="game.js?v=20260717c"></script>
+  <script src="renderer.js?v=20260717h"></script>
+  <script src="game.js?v=20260717h"></script>
 </body>
 </html>

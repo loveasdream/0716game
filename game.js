@@ -34,41 +34,93 @@ const CATCHABLE = ["bread", "beefPatty", "cheese", "cola", "milkTea", "cream", "
 const INITIAL_ORDERS = ["bigTea", "bigTea", "bigTea"];
 const ORDER_POOL = [
   { type: "burgerPatty", level: 1 }, { type: "chickenBucket", level: 1 }, { type: "bigTea", level: 1 },
-  { type: "cheeseBurger", level: 2 }, { type: "foamTea", level: 2 },
-  { type: "cheeseCombo", level: 3 }, { type: "wholeChicken", level: 3 }
+  { type: "cheeseBurger", level: 4 }, { type: "foamTea", level: 5 },
+  { type: "cheeseCombo", level: 6 }, { type: "wholeChicken", level: 7 }
 ];
 const LEVEL_CONFIGS = {
   1: {
     orders: ["bigTea", "bigTea", "bigTea"],
-    drops: ["milkTea", "milkTea", "milkTea", "milkTea", "milkTea", "milkTea", "cream"],
-    title: "奶茶练习班"
+    drops: ["milkTea", "milkTea"],
+    title: "奶茶练习班", rule: "完成第一次接取、合成与交单", quota: 3, parTime: 55, reward: 15
   },
   2: {
     orders: ["chickenBucket", "bigTea", "burgerPatty"],
-    drops: ["chicken", "chicken", "milkTea", "milkTea", "bread", "beefPatty", "chicken", "chicken"],
-    title: "旋转整理班"
+    drops: ["chicken", "chicken"],
+    title: "旋转整理班", rule: "学会安排1×2与2×2食物", quota: 3, parTime: 70, reward: 18
   },
   3: {
     orders: ["burgerPatty", "chickenBucket", "bigTea"],
-    drops: ["bread", "beefPatty", "chicken", "chicken", "milkTea", "milkTea", "cheese", "cola", "cream"],
-    title: "午高峰综合班"
+    drops: ["bread", "beefPatty"],
+    title: "午高峰综合班", rule: "三条基础配方混合出现", quota: 3, parTime: 75, reward: 21
+  },
+  4: {
+    orders: ["cheeseBurger", "burgerPatty", "bigTea"],
+    drops: ["bread", "beefPatty", "cheese"],
+    title: "L型汉堡班", rule: "第一次制作L型芝士汉堡", quota: 4, parTime: 95, reward: 25
+  },
+  5: {
+    orders: ["foamTea", "bigTea", "chickenBucket"],
+    drops: ["milkTea", "milkTea", "cream"],
+    title: "奶盖下午茶", rule: "大杯奶茶继续升级为奶盖", quota: 4, parTime: 105, reward: 28
+  },
+  6: {
+    orders: ["cheeseCombo", "burgerPatty", "chickenBucket"],
+    drops: ["bread", "beefPatty", "cheese", "cola"],
+    title: "套餐装箱班", rule: "为2×2套餐预留完整空间", quota: 4, parTime: 115, reward: 32
+  },
+  7: {
+    orders: ["wholeChicken", "chickenBucket", "bigTea"],
+    drops: ["chicken", "chicken", "chicken", "chicken"],
+    title: "全鸡挑战班", rule: "连续两次炸鸡桶合成全鸡", quota: 5, parTime: 135, reward: 36
+  },
+  8: {
+    orders: ["foamTea", "cheeseBurger", "chickenBucket"],
+    drops: ["milkTea", "milkTea", "cream"],
+    title: "晚餐混合高峰", rule: "三种形状同时争夺背包空间", quota: 5, parTime: 145, reward: 40
+  },
+  9: {
+    orders: ["cheeseCombo", "wholeChicken", "foamTea"],
+    drops: ["bread", "beefPatty", "cheese", "cola"],
+    title: "极限背包班", rule: "终极套餐与全鸡连续出单", quota: 6, parTime: 170, reward: 45
+  },
+  10: {
+    orders: ["wholeChicken", "cheeseCombo", "foamTea"],
+    drops: ["chicken", "chicken", "chicken", "chicken"],
+    title: "金牌骑手考核", rule: "完成快餐篇最终综合考核", quota: 6, parTime: 185, reward: 55
   }
 };
+const MAX_LEVEL = Object.keys(LEVEL_CONFIGS).length;
 const WAVES = [
   { id: "prep", name: "备餐期", from: 0, spawn: 1.8, fall: 1.08, maxDrops: 2 },
   { id: "rush", name: "午高峰", from: 12, spawn: 1.28, fall: .91, maxDrops: 3 },
   { id: "sprint", name: "冲单期", from: 30, spawn: .98, fall: .78, maxDrops: 4 }
 ];
+const PLAYTEST_KEY = "pocket-delivery-playtest-v1";
+const playtest = {
+  sessionId: globalThis.crypto?.randomUUID?.() || `session-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  startedAt: Date.now()
+};
 const state = {
   items: [], orders: [], falling: new Map(), hand: null, selectedId: null,
-  level: 1, quota: 3, delivered: 0, coins: 0, shiftIncome: 0,
+  level: 1, quota: 3, delivered: 0, coins: 0, shiftIncome: 0, levelReward: 0,
+  mode: "career", dailyConfig: null, dailyRefills: [],
   insulation: 0, maxFresh: 3, uid: 1, dropUid: 1,
   running: false, paused: true, locked: false, sound: true,
   lastMessage: "按住上方包裹，直接拖进背包",
   scriptedDrops: [...LEVEL_CONFIGS[1].drops],
   bagGesture: null, catchDrag: null, preview: null, dragValidity: null,
   suppressClick: false, theme: "warm", actionCount: 0, guideStep: 0,
-  shiftElapsed: 0, nextSpawnIn: 0, waveId: "prep", lastFrame: 0, lastClockSecond: -1
+  tutorialActive: false, tutorialComplete: false, tutorialStartedAt: 0,
+  progress: {
+    unlockedLevel: 1, currentLevel: 1, bestStars: {}, bestTimes: {}, completedLevels: {},
+    totalDeliveries: 0, dailyClaimed: {}, dailyBestStars: {}, dailyBestTimes: {}
+  },
+  shiftStats: { expired: 0, merges: 0, failures: 0, neededMisses: 0 },
+  director: {
+    assistLevel: 0, missStreak: 0, failureStreak: 0, successStreak: 0,
+    recentDrops: [], nextNeed: null, lastAdjustment: "", lastMissAssistAt: 0
+  },
+  shiftElapsed: 0, nextSpawnIn: 0, waveId: "prep", lastFrame: 0, lastClockSecond: -1, runId: 1
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -112,6 +164,28 @@ function ensureCanvasStructure() {
     bagGuide = bagTopline.querySelector("b") || document.createElement("b");
     bagGuide.id = "bagGuide";
     if (!bagGuide.parentElement) bagTopline.appendChild(bagGuide);
+  }
+
+  const handTray = $("#handTray");
+  let coachBadge = $("#coachBadge");
+  if (!coachBadge && handTray) {
+    coachBadge = document.createElement("div");
+    coachBadge.id = "coachBadge";
+    coachBadge.className = "coach-badge";
+    coachBadge.hidden = true;
+    handTray.appendChild(coachBadge);
+  }
+
+  const resultModal = $("#levelModal .result-modal");
+  let resultStars = $("#resultStars") || resultModal?.querySelector(".result-star");
+  if (resultStars) resultStars.id = "resultStars";
+  let resultGoals = $("#resultGoals");
+  if (!resultGoals && resultModal) {
+    resultGoals = document.createElement("div");
+    resultGoals.id = "resultGoals";
+    resultGoals.className = "result-goals";
+    const stats = resultModal.querySelector(".result-stats");
+    resultModal.insertBefore(resultGoals, stats || resultModal.lastElementChild);
   }
 
   let skyCanvas = $("#skyCanvas");
@@ -169,8 +243,12 @@ function init() {
   initialized = true;
   const canvases = ensureCanvasStructure();
   loadProgress();
+  state.level = state.tutorialComplete
+    ? Math.min(state.progress.unlockedLevel, Math.max(1, state.progress.currentLevel))
+    : 1;
+  updateStartModal();
   buildGrid();
-  configureLevel(1);
+  configureLevel(state.level);
   renderer = window.createCanvasRenderer({
     skyCanvas: canvases.skyCanvas, bagCanvas: canvases.bagCanvas, dragCanvas: canvases.dragCanvas,
     getState: () => state, getFood: (type) => FOOD[type],
@@ -181,9 +259,16 @@ function init() {
   bindEvents();
   renderRecipes();
   render();
+  trackEvent("session_start", { returning: state.tutorialComplete });
   document.body.dataset.theme = state.theme;
   updateThemeButtons();
   window.requestAnimationFrame(gameLoop);
+}
+
+function updateStartModal() {
+  if (!state.tutorialComplete) return;
+  $("#startTitle").textContent = "准备开始今天的配送";
+  $("#startButton").textContent = `继续第${state.level}班`;
 }
 
 function loadProgress() {
@@ -194,13 +279,84 @@ function loadProgress() {
     state.maxFresh = 3 + state.insulation;
     state.theme = saved.theme === "cyber" ? "cyber" : "warm";
     state.sound = saved.sound !== false;
+    state.tutorialComplete = saved.tutorialComplete === true;
+    const progress = saved.progress || {};
+    state.progress.unlockedLevel = Math.min(MAX_LEVEL, Math.max(1, Number(progress.unlockedLevel) || 1));
+    state.progress.currentLevel = Math.min(state.progress.unlockedLevel, Math.max(1, Number(progress.currentLevel) || 1));
+    state.progress.bestStars = progress.bestStars && typeof progress.bestStars === "object" ? progress.bestStars : {};
+    state.progress.bestTimes = progress.bestTimes && typeof progress.bestTimes === "object" ? progress.bestTimes : {};
+    state.progress.completedLevels = progress.completedLevels && typeof progress.completedLevels === "object" ? progress.completedLevels : {};
+    state.progress.totalDeliveries = Number(progress.totalDeliveries) || 0;
+    state.progress.dailyClaimed = progress.dailyClaimed && typeof progress.dailyClaimed === "object" ? progress.dailyClaimed : {};
+    state.progress.dailyBestStars = progress.dailyBestStars && typeof progress.dailyBestStars === "object" ? progress.dailyBestStars : {};
+    state.progress.dailyBestTimes = progress.dailyBestTimes && typeof progress.dailyBestTimes === "object" ? progress.dailyBestTimes : {};
   } catch (_) { /* A fresh save is fine. */ }
 }
 
 function saveProgress() {
   try {
-    localStorage.setItem("pocket-delivery-progress", JSON.stringify({ coins: state.coins, insulation: state.insulation, theme: state.theme, sound: state.sound }));
+    localStorage.setItem("pocket-delivery-progress", JSON.stringify({
+      coins: state.coins, insulation: state.insulation, theme: state.theme,
+      sound: state.sound, tutorialComplete: state.tutorialComplete,
+      progress: state.progress
+    }));
   } catch (_) { /* Storage is optional. */ }
+}
+
+function trackEvent(name, details = {}) {
+  const event = {
+    name, at: Date.now(), elapsed: Math.round((Date.now() - playtest.startedAt) / 1000),
+    sessionId: playtest.sessionId, level: state.level, guideStep: state.guideStep,
+    delivered: state.delivered, actions: state.actionCount, ...details
+  };
+  try {
+    const events = JSON.parse(localStorage.getItem(PLAYTEST_KEY) || "[]");
+    events.push(event);
+    localStorage.setItem(PLAYTEST_KEY, JSON.stringify(events.slice(-400)));
+  } catch (_) { /* Playtest logging must never interrupt the game. */ }
+}
+
+function currentSessionEvents() {
+  try {
+    return JSON.parse(localStorage.getItem(PLAYTEST_KEY) || "[]")
+      .filter((event) => event.sessionId === playtest.sessionId);
+  } catch (_) { return []; }
+}
+
+function playtestReportText() {
+  const events = currentSessionEvents();
+  const count = (name) => events.filter((event) => event.name === name).length;
+  const last = events.at(-1);
+  const completion = events.find((event) => event.name === "tutorial_complete");
+  return [
+    "《外卖落下来啦》匿名试玩报告",
+    `会话：${playtest.sessionId.slice(0, 8)}`,
+    `时长：${last?.elapsed || 0}秒｜到达关卡：${state.level}｜送达：${state.delivered}`,
+    `接取：${count("drop_caught")}｜成功放置：${count("placement_success")}｜放置失败：${count("placement_failed")}`,
+    `合成成功：${count("merge_success")}｜合成失败：${count("merge_failed")}｜交单失败：${count("delivery_failed")}`,
+    `冷餐：${count("food_expired")}｜漏接：${count("drop_missed")}`,
+    `互动教学：${completion ? `${completion.duration}秒完成` : `未完成（步骤${state.guideStep}/5）`}`,
+    "报告只包含游戏步骤和结果，不包含姓名、手机号或聊天内容。"
+  ].join("\n");
+}
+
+async function sharePlaytestReport() {
+  trackEvent("report_opened");
+  const text = playtestReportText();
+  try {
+    if (navigator.share) await navigator.share({ title: "外卖小游戏试玩报告", text });
+    else {
+      await navigator.clipboard.writeText(text);
+      showToast("试玩报告已复制，可以直接发给开发者", "good");
+    }
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast("试玩报告已复制，可以直接粘贴发送", "good");
+      } catch (_) { showToast("报告生成成功，但浏览器不允许复制", "bad"); }
+    }
+  }
 }
 
 function buildGrid() {
@@ -226,6 +382,10 @@ function bindEvents() {
   $("#eraserButton").addEventListener("click", useEraser);
   $("#soundButton").addEventListener("click", toggleSound);
   $("#shareButton").addEventListener("click", shareGame);
+  $("#reportButton")?.addEventListener("click", sharePlaytestReport);
+  $("#levelsButton")?.addEventListener("click", openLevelMap);
+  $("#dailyButton")?.addEventListener("click", openLevelMap);
+  $("#dailyMapButton")?.addEventListener("click", startDailyChallenge);
   $("#resultShareButton").addEventListener("click", shareGame);
   $("#nextLevelButton").addEventListener("click", nextLevel);
   document.querySelectorAll("[data-close-modal]").forEach((button) => button.addEventListener("click", closeModals));
@@ -252,16 +412,37 @@ function startGame() {
   $("#startModal").hidden = true;
   if (!state.running) {
     state.running = true;
+    state.tutorialActive = state.level === 1 && !state.tutorialComplete;
+    state.guideStep = state.tutorialActive ? 0 : 5;
+    state.tutorialStartedAt = state.tutorialActive ? Date.now() : 0;
     state.shiftElapsed = 0;
     state.nextSpawnIn = .85;
     state.waveId = "prep";
     setPaused(false);
     spawnDrop();
+    trackEvent("game_start", { tutorial: state.tutorialActive });
   }
   setPaused(false);
+  render();
   showToast("按住包裹直接拖进背包，轻点接住也可以", "good");
   playTone(620, .08);
   window.setTimeout(() => mobileFocus(sky), 120);
+}
+
+function advanceTutorial(step) {
+  if (!state.tutorialActive || step <= state.guideStep) return;
+  state.guideStep = step;
+  trackEvent("tutorial_step", { step });
+  if (step === 2) state.nextSpawnIn = .45;
+  if (step === 5) {
+    state.tutorialActive = false;
+    state.tutorialComplete = true;
+    state.nextSpawnIn = .75;
+    const duration = Math.max(1, Math.round((Date.now() - state.tutorialStartedAt) / 1000));
+    trackEvent("tutorial_complete", { duration });
+    saveProgress();
+    showToast(`上岗教学完成，用时${duration}秒！接下来自己完成另外两单`, "good");
+  }
 }
 
 function setPaused(value) {
@@ -273,20 +454,211 @@ function anyModalOpen() {
   return [...document.querySelectorAll(".modal-backdrop")].some((modal) => !modal.hidden);
 }
 
-function configureLevel(level) {
-  const config = LEVEL_CONFIGS[level];
-  state.quota = level <= 3 ? 3 : Math.min(7, 3 + Math.floor((level - 1) / 2));
-  const orderTypes = config?.orders || [chooseOrder(), chooseOrder(), chooseOrder()];
-  state.orders = orderTypes.map((type, index) => createOrder(type, `${level}-${index}`));
-  state.scriptedDrops = [...(config?.drops || [])];
+function currentLevelConfig() {
+  return state.mode === "daily" ? state.dailyConfig : LEVEL_CONFIGS[state.level];
+}
+
+function resetShiftMetrics(config) {
   state.shiftElapsed = 0;
   state.nextSpawnIn = .75;
   state.waveId = "prep";
   state.lastClockSecond = -1;
+  state.actionCount = 0;
+  state.levelReward = 0;
+  state.shiftStats = { expired: 0, merges: 0, failures: 0, neededMisses: 0 };
+  state.lastMessage = config.rule || "按住上方包裹，直接拖进背包";
+  state.director.assistLevel = Math.max(0, state.director.assistLevel - 1);
+  state.director.missStreak = 0;
+  state.director.failureStreak = 0;
+  state.director.successStreak = 0;
+  state.director.recentDrops = [];
+  state.director.nextNeed = null;
+  state.director.lastMissAssistAt = 0;
+}
+
+function configureLevel(level) {
+  const config = LEVEL_CONFIGS[level];
+  state.mode = "career";
+  state.dailyConfig = null;
+  state.dailyRefills = [];
+  state.quota = config.quota;
+  const orderTypes = config?.orders || [chooseOrder(), chooseOrder(), chooseOrder()];
+  state.orders = orderTypes.map((type, index) => createOrder(type, `${level}-${index}`));
+  state.scriptedDrops = [...(config?.drops || [])];
+  resetShiftMetrics(config);
+}
+
+function dailyKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function seededRandom(seedText) {
+  let seed = [...seedText].reduce((value, char) => Math.imul(value ^ char.charCodeAt(0), 2654435761) >>> 0, 2166136261);
+  return () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+}
+
+function buildDailyConfig() {
+  const key = dailyKey();
+  const random = seededRandom(key);
+  const pool = ["bigTea", "burgerPatty", "chickenBucket", "cheeseBurger", "foamTea"];
+  const orders = Array.from({ length: 4 }, () => pool[Math.floor(random() * pool.length)]);
+  const rules = [
+    "今日同一套订单：比拼最快送达时间",
+    "今日整洁挑战：无冷餐可获得第三颗星",
+    "今日高峰挑战：稳定整理比盲目接取更重要"
+  ];
+  return {
+    key, title: `今日特送 · ${key.slice(5)}`, rule: rules[Math.floor(random() * rules.length)],
+    orders, drops: baseIngredients(orders[0]).filter((type) => CATCHABLE.includes(type)).slice(0, 4),
+    quota: 4, parTime: 105, reward: 30
+  };
+}
+
+function configureDailyChallenge() {
+  state.mode = "daily";
+  state.dailyConfig = buildDailyConfig();
+  state.quota = state.dailyConfig.quota;
+  state.orders = state.dailyConfig.orders.slice(0, 3).map((type, index) => createOrder(type, `daily-${state.dailyConfig.key}-${index}`));
+  state.dailyRefills = state.dailyConfig.orders.slice(3);
+  state.scriptedDrops = [...state.dailyConfig.drops];
+  resetShiftMetrics(state.dailyConfig);
 }
 
 function currentWave() {
   return [...WAVES].reverse().find((wave) => state.shiftElapsed >= wave.from) || WAVES[0];
+}
+
+function difficultyProfile(wave = currentWave()) {
+  if (state.tutorialActive) return { spawnInterval: 99, fallMultiplier: 1.65, maxDrops: 1 };
+  const assist = state.director.assistLevel;
+  const mastery = Math.min(.12, state.director.successStreak * .015);
+  return {
+    spawnInterval: wave.spawn * (1 + assist * .18) * (1 - mastery * .35),
+    fallMultiplier: Math.max(.88, 1 + assist * .2 - mastery),
+    maxDrops: Math.max(1, wave.maxDrops - (assist >= 1 ? 1 : 0))
+  };
+}
+
+function recordOutcome(kind, details = {}) {
+  const director = state.director;
+  const before = director.assistLevel;
+  if (kind === "miss") {
+    director.missStreak += 1;
+    director.failureStreak += 1;
+    director.successStreak = 0;
+    const now = Date.now();
+    if (now - director.lastMissAssistAt >= 3500) {
+      director.assistLevel = Math.min(3, director.assistLevel + 1);
+      director.lastMissAssistAt = now;
+    }
+  } else if (kind === "failure") {
+    director.failureStreak += 1;
+    director.successStreak = Math.max(0, director.successStreak - 1);
+    if (director.failureStreak >= 2) {
+      director.assistLevel = Math.min(3, director.assistLevel + 1);
+      director.failureStreak = 0;
+    }
+  } else if (kind === "expired") {
+    director.failureStreak = 0;
+    director.successStreak = 0;
+    director.assistLevel = Math.min(3, director.assistLevel + 1);
+  } else if (kind === "success") {
+    director.successStreak += 1;
+    director.missStreak = Math.max(0, director.missStreak - 1);
+    director.failureStreak = Math.max(0, director.failureStreak - 1);
+    if (director.successStreak % 2 === 0) director.assistLevel = Math.max(0, director.assistLevel - 1);
+  }
+  if (before !== director.assistLevel) {
+    director.lastAdjustment = kind;
+    trackEvent("difficulty_adjusted", { from: before, to: director.assistLevel, reason: kind, ...details });
+  }
+}
+
+function activeSupplySources(includeFalling = true) {
+  const sources = state.items
+    .filter((item) => item.type !== "badReview" && item.timer > 0)
+    .map((item) => ({ type: item.type, kind: "bag", id: item.id }));
+  if (state.hand) sources.push({ type: state.hand.type, kind: "hand", id: "hand" });
+  if (includeFalling) state.falling.forEach((drop) => sources.push({ type: drop.type, kind: "falling", id: drop.id }));
+  return sources;
+}
+
+function solvabilityPlan({ includeFalling = true } = {}) {
+  const pending = state.orders
+    .map((order, orderIndex) => ({ order, orderIndex }))
+    .filter(({ order }) => !order.done);
+  const sources = activeSupplySources(includeFalling);
+  const unresolved = [];
+
+  pending.forEach((entry) => {
+    let sourceIndex = sources.findIndex((source) => source.type === entry.order.type);
+    if (sourceIndex < 0) sourceIndex = sources.findIndex((source) => canFulfill(entry.order.type, source.type));
+    if (sourceIndex >= 0) sources.splice(sourceIndex, 1);
+    else unresolved.push(entry);
+  });
+
+  const supply = new Map();
+  sources.forEach((source) => baseIngredients(source.type).forEach((type) => {
+    if (CATCHABLE.includes(type)) supply.set(type, (supply.get(type) || 0) + 1);
+  }));
+
+  const missing = [];
+  unresolved.forEach(({ order, orderIndex }) => {
+    baseIngredients(order.type).forEach((type) => {
+      const available = supply.get(type) || 0;
+      if (available > 0) supply.set(type, available - 1);
+      else if (CATCHABLE.includes(type)) missing.push({ type, orderIndex, orderType: order.type });
+    });
+  });
+  return { pending, unresolved, missing, readyCount: pending.length - unresolved.length };
+}
+
+function chooseDirectedDrop() {
+  const plan = solvabilityPlan();
+  const earliestOrder = plan.missing.length ? Math.min(...plan.missing.map((need) => need.orderIndex)) : -1;
+  const urgent = earliestOrder >= 0 ? plan.missing.filter((need) => need.orderIndex === earliestOrder) : [];
+  const scripted = state.scriptedDrops[0];
+  if (scripted && (!urgent.length || urgent.some((need) => need.type === scripted))) {
+    state.scriptedDrops.shift();
+    state.director.nextNeed = urgent.find((need) => need.type === scripted) || null;
+    return { type: scripted, source: "scripted", plan };
+  }
+
+  if (urgent.length) {
+    const counts = new Map();
+    urgent.forEach((need) => counts.set(need.type, (counts.get(need.type) || 0) + 1));
+    const recent = state.director.recentDrops;
+    const options = [...counts.keys()].sort((a, b) => {
+      const countDiff = counts.get(b) - counts.get(a);
+      if (countDiff) return countDiff;
+      const lastA = recent.lastIndexOf(a);
+      const lastB = recent.lastIndexOf(b);
+      return lastA - lastB;
+    });
+    const lastTwo = recent.slice(-2);
+    const type = options.find((option) => options.length === 1 || !lastTwo.every((recentType) => recentType === option)) || options[0];
+    state.director.nextNeed = urgent.find((need) => need.type === type) || null;
+    return { type, source: "guaranteed", plan };
+  }
+
+  if (scripted) {
+    state.scriptedDrops.shift();
+    state.director.nextNeed = null;
+    return { type: scripted, source: "scripted", plan };
+  }
+
+  const firstOrder = plan.pending[0]?.order;
+  const useful = firstOrder ? baseIngredients(firstOrder.type).filter((type) => CATCHABLE.includes(type)) : CATCHABLE;
+  const pool = useful.length ? useful : CATCHABLE;
+  const type = pool[Math.floor(Math.random() * pool.length)];
+  state.director.nextNeed = null;
+  return { type, source: "support", plan };
 }
 
 function gameLoop(now) {
@@ -304,15 +676,21 @@ function gameLoop(now) {
     });
     missed.forEach((id) => removeDrop(id, true));
     const wave = currentWave();
-    if (wave.id !== state.waveId) {
+    if (!state.tutorialActive && wave.id !== state.waveId) {
       state.waveId = wave.id;
       showToast(wave.id === "sprint" ? "冲单期！外卖加速，稳住背包" : "午高峰来了！掉落开始加快", wave.id === "sprint" ? "bad" : "good");
       playTone(wave.id === "sprint" ? 880 : 720, .09);
       haptic(22);
     }
     if (state.nextSpawnIn <= 0) {
-      spawnDrop();
-      state.nextSpawnIn = wave.spawn;
+      if (state.tutorialActive) {
+        const tutorialNeedsDrop = !state.hand && state.falling.size === 0 && (state.guideStep === 0 || state.guideStep === 2);
+        if (tutorialNeedsDrop) spawnDrop();
+        state.nextSpawnIn = tutorialNeedsDrop ? 99 : .18;
+      } else {
+        spawnDrop();
+        state.nextSpawnIn = difficultyProfile(wave).spawnInterval;
+      }
     }
     const second = Math.floor(state.shiftElapsed);
     if (second !== state.lastClockSecond) {
@@ -326,16 +704,28 @@ function gameLoop(now) {
 
 function spawnDrop() {
   const wave = currentWave();
-  if (!state.running || state.paused || state.locked || state.falling.size >= wave.maxDrops) return;
-  const type = state.scriptedDrops.length ? state.scriptedDrops.shift() : chooseHelpfulDrop();
+  const profile = difficultyProfile(wave);
+  if (!state.running || state.paused || state.locked || state.falling.size >= profile.maxDrops) return;
+  const choice = chooseDirectedDrop();
+  const type = choice.type;
   const id = `drop-${state.dropUid++}`;
   const laneLoads = [0, 1, 2].map((lane) => [...state.falling.values()].filter((drop) => drop.lane === lane).length);
   const lightest = Math.min(...laneLoads);
   const possibleLanes = laneLoads.map((load, lane) => load === lightest ? lane : -1).filter((lane) => lane >= 0);
   const lane = possibleLanes[Math.floor(Math.random() * possibleLanes.length)];
-  const fallSeconds = Math.max(3.65, (6.25 - state.level * .13 + Math.random() * .55) * wave.fall);
+  const fallSeconds = state.tutorialActive
+    ? 11
+    : Math.max(3.65, (6.25 - state.level * .13 + Math.random() * .55) * wave.fall * profile.fallMultiplier);
   state.falling.set(id, { id, type, lane, progress: 0, duration: fallSeconds });
+  state.director.recentDrops.push(type);
+  state.director.recentDrops = state.director.recentDrops.slice(-8);
+  trackEvent("drop_spawned", {
+    type, tutorial: state.tutorialActive, source: choice.source,
+    assist: state.director.assistLevel, neededFor: state.director.nextNeed?.orderType || null
+  });
   renderFallCount();
+  renderHand();
+  renderPressure();
 }
 
 function removeDrop(id, missed = false) {
@@ -343,11 +733,19 @@ function removeDrop(id, missed = false) {
   if (!drop) return;
   state.falling.delete(id);
   if (missed) {
+    const stillNeeded = solvabilityPlan().missing.some((need) => need.type === drop.type);
+    trackEvent("drop_missed", { type: drop.type, tutorial: state.tutorialActive, needed: stillNeeded });
+    if (!state.tutorialActive && stillNeeded) {
+      state.shiftStats.neededMisses += 1;
+      recordOutcome("miss", { type: drop.type });
+    }
     const label = $("#missedLabel");
     label.textContent = `放过了${FOOD[drop.type].name} · 不扣分`;
     window.setTimeout(() => { label.textContent = "不需要的可以放过"; }, 1100);
   }
   renderFallCount();
+  renderHand();
+  renderPressure();
 }
 
 function onSkyPointerDown(event) {
@@ -370,8 +768,10 @@ function catchDrop(id, gesture = null) {
   }
   tickExisting([]);
   state.hand = { type: drop.type, rotation: 0, timer: state.maxFresh, origin: null };
-  state.guideStep = Math.max(state.guideStep, 1);
+  if (state.tutorialActive && state.guideStep === 0) advanceTutorial(1);
+  else if (state.tutorialActive && state.guideStep === 2) advanceTutorial(3);
   state.selectedId = null;
+  trackEvent("drop_caught", { type: drop.type, dragged: Boolean(gesture), tutorial: state.tutorialActive });
   removeDrop(id, false);
   if (gesture) {
     state.catchDrag = { pointerId: gesture.pointerId, x: gesture.clientX, y: gesture.clientY, startX: gesture.clientX, startY: gesture.clientY };
@@ -382,13 +782,6 @@ function catchDrop(id, gesture = null) {
   haptic(12);
   render();
   window.setTimeout(() => mobileFocus(backpack), 80);
-}
-
-function chooseHelpfulDrop() {
-  const needs = state.orders.filter((order) => !order.done).flatMap((order) => baseIngredients(order.type));
-  const weighted = needs.filter((type) => CATCHABLE.includes(type));
-  const pool = Math.random() < .82 && weighted.length ? weighted : CATCHABLE;
-  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function baseIngredients(type, depth = 0) {
@@ -536,6 +929,9 @@ function placeHand(x, y) {
   }
   if (!placement) {
     const required = shapeLabel(state.hand.type);
+    state.shiftStats.failures += 1;
+    trackEvent("placement_failed", { type: state.hand.type, reason: "no_space", required });
+    recordOutcome("failure", { action: "placement", reason: "no_space" });
     showToast(`${FOOD[state.hand.type].name}需要${required}的连续空位；拖动食物腾位置，或点“放弃”`, "bad");
     bump(backpack);
     state.lastMessage = `放不下：需要${required}连续空位`;
@@ -545,9 +941,10 @@ function placeHand(x, y) {
   const item = createItem(state.hand.type, placement.x, placement.y, placement.rotation, state.hand.timer);
   state.items.push(item);
   const name = FOOD[state.hand.type].name;
+  trackEvent("placement_success", { type: state.hand.type, x: placement.x, y: placement.y, snapped });
   state.hand = null;
   state.selectedId = item.id;
-  state.guideStep = Math.max(state.guideStep, 2);
+  if (state.tutorialActive && state.guideStep === 1) advanceTutorial(2);
   state.lastMessage = `${name}已放入背包`;
   showToast(snapped ? `${name}已自动贴齐最近的绿色格` : `${name}已放入背包；拖动可以整理`, "good");
   playTone(370, .05);
@@ -562,6 +959,9 @@ function attemptHandMerge(target) {
   if (!recipe) {
     const possible = RECIPES.filter((entry) => entry.a === state.hand.type || entry.b === state.hand.type)
       .map((entry) => FOOD[entry.a === state.hand.type ? entry.b : entry.a].name);
+    state.shiftStats.failures += 1;
+    trackEvent("merge_failed", { source: state.hand.type, target: target.type, reason: "no_recipe" });
+    recordOutcome("failure", { action: "merge", reason: "no_recipe" });
     showToast(`${FOOD[state.hand.type].name}不能和${FOOD[target.type].name}合成${possible.length ? `；请找${possible.join("或")}` : ""}`, "bad");
     bump(targetElement(target.id));
     return;
@@ -569,6 +969,9 @@ function attemptHandMerge(target) {
   const placement = findMergePlacement(recipe.result, [target]);
   if (!placement) {
     const reason = mergeSpaceMessage(recipe.result, [target]);
+    state.shiftStats.failures += 1;
+    trackEvent("merge_failed", { source: state.hand.type, target: target.type, result: recipe.result, reason: "no_space" });
+    recordOutcome("failure", { action: "merge", reason: "no_space" });
     showToast(reason, "bad");
     state.lastMessage = reason;
     bump(targetElement(target.id));
@@ -581,9 +984,12 @@ function attemptHandMerge(target) {
   const result = createItem(recipe.result, placement.x, placement.y, placement.rotation, state.maxFresh);
   state.items.push(result);
   const handName = FOOD[state.hand.type].name;
+  state.shiftStats.merges += 1;
+  trackEvent("merge_success", { source: state.hand.type, target: target.type, result: recipe.result, mode: "hand" });
+  recordOutcome("success", { action: "merge" });
   state.hand = null;
   state.selectedId = result.id;
-  state.guideStep = Math.max(state.guideStep, 3);
+  if (state.tutorialActive && state.guideStep === 3) advanceTutorial(4);
   state.lastMessage = `刚合成：${FOOD[result.type].name}`;
   showToast(`${handName}直接合成成功：${FOOD[result.type].name}！鲜度回满`, "good");
   playMergeSound();
@@ -598,6 +1004,9 @@ function mergeBagItems(first, second, resultType) {
   const placement = findMergePlacement(resultType, [first, second]);
   if (!placement) {
     const reason = mergeSpaceMessage(resultType, [first, second]);
+    state.shiftStats.failures += 1;
+    trackEvent("merge_failed", { source: first.type, target: second.type, result: resultType, reason: "no_space", mode: "bag" });
+    recordOutcome("failure", { action: "merge", reason: "no_space" });
     showToast(reason, "bad");
     state.lastMessage = reason;
     window.setTimeout(clearPreview, 1300);
@@ -608,8 +1017,11 @@ function mergeBagItems(first, second, resultType) {
   state.items = state.items.filter((item) => item.id !== first.id && item.id !== second.id);
   const result = createItem(resultType, placement.x, placement.y, placement.rotation, state.maxFresh);
   state.items.push(result);
+  state.shiftStats.merges += 1;
   state.selectedId = result.id;
-  state.guideStep = Math.max(state.guideStep, 3);
+  trackEvent("merge_success", { source: first.type, target: second.type, result: resultType, mode: "bag" });
+  recordOutcome("success", { action: "merge" });
+  if (state.tutorialActive && state.guideStep === 3) advanceTutorial(4);
   state.lastMessage = `刚合成：${FOOD[resultType].name}`;
   showToast(`合成成功：${FOOD[resultType].name}！鲜度回满`, "good");
   playMergeSound();
@@ -634,6 +1046,9 @@ function tickExisting(ignoreIds) {
     item.rotation = 0;
     item.timer = null;
     if (state.selectedId === item.id) state.selectedId = null;
+    state.shiftStats.expired += 1;
+    trackEvent("food_expired", { type: oldName, cells: item.shapeOverride.length });
+    recordOutcome("expired", { type: oldName });
     showToast(`${oldName}冷掉了，原来的位置全部变成差评块！`, "bad");
     playTone(105, .17);
   });
@@ -858,6 +1273,9 @@ function deliverOrder(orderId) {
   const exact = candidates.filter((item) => item.type === order.type).sort((a, b) => a.timer - b.timer)[0];
   const item = selectedCandidate || exact || candidates.sort((a, b) => FOOD[a.type].value - FOOD[b.type].value || a.timer - b.timer)[0];
   if (!item) {
+    state.shiftStats.failures += 1;
+    trackEvent("delivery_failed", { order: order.type, reason: "missing_item" });
+    recordOutcome("failure", { action: "delivery", order: order.type });
     showToast(explainOrderFailure(order.type), "bad");
     bump($("#ordersList"));
     return;
@@ -870,27 +1288,27 @@ function deliverOrder(orderId) {
   state.coins += payout;
   state.shiftIncome += payout;
   state.delivered += 1;
-  state.guideStep = Math.max(state.guideStep, 4);
+  state.progress.totalDeliveries += 1;
+  trackEvent("delivery_success", { order: order.type, item: item.type, payout, upgraded });
+  recordOutcome("success", { action: "delivery" });
   order.done = true;
   state.lastMessage = `已交付${FOOD[item.type].name}，收入 ¥${payout}`;
   saveProgress();
   showToast(`${upgraded ? "高阶替代" : "精准"}送达！${FOOD[item.type].name}收入 ¥${payout}${waveBonus > 1 ? "（冲单加成）" : ""}`, "good");
   playTone(760, .08); window.setTimeout(() => playTone(960, .09), 70);
   haptic(35);
+  if (state.tutorialActive && state.guideStep === 4) advanceTutorial(5);
   render();
   if (state.delivered >= state.quota) {
-    state.locked = true;
-    setPaused(true);
-    const reward = 12 + state.level * 3;
-    $("#shiftIncome").textContent = state.shiftIncome;
-    $("#levelReward").textContent = reward;
-    $("#resultText").textContent = `完成 ${state.quota} 单配送，背包里还剩 ${state.items.length} 件物品`;
-    window.setTimeout(() => openModal("levelModal"), 420);
+    completeShift();
   } else {
     const remainingNeed = state.quota - state.delivered;
     const remainingVisible = state.orders.filter((candidate) => !candidate.done).length;
+    const activeRun = state.runId;
     if (remainingNeed > remainingVisible) window.setTimeout(() => {
+      if (state.runId !== activeRun) return;
       const index = state.orders.indexOf(order);
+      if (index < 0) return;
       state.orders[index] = createOrder(chooseOrder(), `${Date.now()}-${index}`);
       render();
     }, 430);
@@ -928,31 +1346,170 @@ function explainOrderFailure(orderType) {
 }
 
 function chooseOrder() {
-  const pool = ORDER_POOL.filter((entry) => entry.level <= state.level).map((entry) => entry.type);
+  if (state.mode === "daily" && state.dailyRefills.length) return state.dailyRefills.shift();
+  const difficultyLevel = state.mode === "daily" ? Math.max(2, state.progress.unlockedLevel) : state.level;
+  const pool = ORDER_POOL.filter((entry) => entry.level <= difficultyLevel).map((entry) => entry.type);
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-function nextLevel() {
-  const reward = 12 + state.level * 3;
+function evaluateShift() {
+  const config = currentLevelConfig();
+  const elapsed = Math.max(1, Math.round(state.shiftElapsed));
+  const onTime = elapsed <= config.parTime;
+  const clean = state.shiftStats.expired === 0;
+  return { elapsed, onTime, clean, stars: 1 + Number(onTime) + Number(clean), config };
+}
+
+function completeShift() {
+  if (state.locked) return;
+  state.locked = true;
+  setPaused(true);
+  const result = evaluateShift();
+  let firstClear = false;
+  let reward = 0;
+
+  if (state.mode === "career") {
+    const key = String(state.level);
+    firstClear = !state.progress.completedLevels[key];
+    state.progress.completedLevels[key] = true;
+    state.progress.bestStars[key] = Math.max(Number(state.progress.bestStars[key]) || 0, result.stars);
+    const previousTime = Number(state.progress.bestTimes[key]) || Infinity;
+    state.progress.bestTimes[key] = Math.min(previousTime, result.elapsed);
+    state.progress.unlockedLevel = Math.min(MAX_LEVEL, Math.max(state.progress.unlockedLevel, state.level + 1));
+    state.progress.currentLevel = Math.min(MAX_LEVEL, state.level < MAX_LEVEL ? state.level + 1 : state.level);
+    reward = firstClear ? result.config.reward : Math.max(5, Math.round(result.config.reward * .25));
+  } else {
+    const key = state.dailyConfig.key;
+    firstClear = !state.progress.dailyClaimed[key];
+    state.progress.dailyClaimed[key] = true;
+    state.progress.dailyBestStars[key] = Math.max(Number(state.progress.dailyBestStars[key]) || 0, result.stars);
+    const previousTime = Number(state.progress.dailyBestTimes[key]) || Infinity;
+    state.progress.dailyBestTimes[key] = Math.min(previousTime, result.elapsed);
+    reward = firstClear ? result.config.reward : 0;
+  }
+
+  state.levelReward = reward;
   state.coins += reward;
-  state.level += 1;
+  $("#shiftIncome").textContent = state.shiftIncome;
+  $("#levelReward").textContent = reward;
+  $("#resultStars").textContent = `${"★".repeat(result.stars)}${"☆".repeat(3 - result.stars)}`;
+  $("#resultText").textContent = `${result.config.title}完成：${state.quota}单 · ${result.elapsed}秒`;
+  $("#resultGoals").innerHTML = [
+    `<span class="goal done">✓ 完成${state.quota}单</span>`,
+    `<span class="goal ${result.onTime ? "done" : "miss"}">${result.onTime ? "✓" : "○"} 准时 ${result.elapsed}/${result.config.parTime}秒</span>`,
+    `<span class="goal ${result.clean ? "done" : "miss"}">${result.clean ? "✓" : "○"} 无冷餐${result.clean ? "" : `（${state.shiftStats.expired}份）`}</span>`
+  ].join("");
+  $("#nextLevelButton").textContent = state.mode === "career" && state.level < MAX_LEVEL ? "进入下一班" : "返回配送地图";
+  saveProgress();
+  renderHeader();
+  trackEvent("level_complete", {
+    mode: state.mode, duration: result.elapsed, income: state.shiftIncome,
+    stars: result.stars, firstClear, reward
+  });
+  window.setTimeout(() => openModal("levelModal"), 420);
+}
+
+function resetRunBoard() {
+  state.runId += 1;
   state.delivered = 0;
   state.shiftIncome = 0;
-  state.items = state.items.filter((item) => item.type !== "badReview");
+  state.items = [];
   state.falling.clear();
   state.hand = null;
   state.selectedId = null;
   state.catchDrag = null;
   state.bagGesture = null;
+  state.tutorialActive = false;
+  state.guideStep = 5;
   clearPreview();
   state.locked = false;
-  configureLevel(state.level);
+}
+
+function startCareerLevel(level) {
+  if (level < 1 || level > state.progress.unlockedLevel || level > MAX_LEVEL) return;
+  resetRunBoard();
+  state.level = level;
+  state.progress.currentLevel = level;
+  configureLevel(level);
+  state.running = true;
   closeModals();
   setPaused(false);
   saveProgress();
-  showToast(`${LEVEL_CONFIGS[state.level]?.title || `第 ${state.level} 班`}开始：目标 ${state.quota} 单`, "good");
+  spawnDrop();
+  showToast(`${LEVEL_CONFIGS[level].title}：目标${state.quota}单`, "good");
+  trackEvent("level_started", { level, title: LEVEL_CONFIGS[level].title });
   playTone(630, .08);
   render();
+}
+
+function startDailyChallenge() {
+  if (!state.tutorialComplete) {
+    closeModals();
+    setPaused(false);
+    showToast("先完成30秒上岗教学，再参加今日特送", "bad");
+    return;
+  }
+  resetRunBoard();
+  configureDailyChallenge();
+  state.running = true;
+  closeModals();
+  setPaused(false);
+  spawnDrop();
+  showToast(`${state.dailyConfig.title}：同一天所有玩家订单相同`, "good");
+  trackEvent("daily_started", { key: state.dailyConfig.key, orders: state.dailyConfig.orders.join(",") });
+  render();
+}
+
+function nextLevel() {
+  if (state.mode === "career" && state.level < MAX_LEVEL) {
+    startCareerLevel(Math.min(state.level + 1, state.progress.unlockedLevel));
+    return;
+  }
+  state.running = false;
+  state.locked = false;
+  closeModals();
+  openLevelMap();
+}
+
+function totalCareerStars() {
+  return Object.values(state.progress.bestStars).reduce((sum, stars) => sum + (Number(stars) || 0), 0);
+}
+
+function renderLevelMap() {
+  const grid = $("#levelGrid");
+  if (!grid) return;
+  const stars = totalCareerStars();
+  $("#careerSummary").innerHTML = `<b>${stars}/${MAX_LEVEL * 3} ★</b><span>已解锁 ${state.progress.unlockedLevel}/${MAX_LEVEL} 班 · 累计送达 ${state.progress.totalDeliveries} 单</span>`;
+  grid.innerHTML = "";
+  Object.entries(LEVEL_CONFIGS).forEach(([levelText, config]) => {
+    const level = Number(levelText);
+    const unlocked = level <= state.progress.unlockedLevel;
+    const bestStars = Number(state.progress.bestStars[levelText]) || 0;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.disabled = !unlocked;
+    button.className = `level-card${unlocked ? "" : " locked"}${state.mode === "career" && level === state.level ? " current" : ""}`;
+    button.innerHTML = `<span class="level-number">${String(level).padStart(2, "0")}</span><span><strong>${config.title}</strong><small>${config.rule}</small><i>${bestStars ? `${"★".repeat(bestStars)}${"☆".repeat(3 - bestStars)}` : unlocked ? "未通关" : "未解锁"}</i></span><b>${config.quota}单</b>`;
+    if (unlocked) button.addEventListener("click", () => startCareerLevel(level));
+    grid.appendChild(button);
+  });
+  const today = dailyKey();
+  const dailyDone = Boolean(state.progress.dailyClaimed[today]);
+  const dailyStars = Number(state.progress.dailyBestStars[today]) || 0;
+  const dailyTime = Number(state.progress.dailyBestTimes[today]) || 0;
+  $("#dailyMapButton").innerHTML = `<i>☀</i><span><strong>今日特送 · ${today.slice(5)}</strong><small>${dailyStars ? `${"★".repeat(dailyStars)}${"☆".repeat(3 - dailyStars)} · 最快${dailyTime}秒` : "每日固定订单 · 可重复刷新星级"}</small></span><b>${dailyDone ? "已领奖" : "¥30"}</b>`;
+}
+
+function openLevelMap() {
+  if (!state.tutorialComplete) {
+    closeModals();
+    setPaused(false);
+    showToast("完成第一单教学后解锁配送地图", "bad");
+    return;
+  }
+  closeModals();
+  renderLevelMap();
+  openModal("mapModal");
 }
 
 function buyInsulation() {
@@ -995,7 +1552,7 @@ function render() {
 }
 
 function renderHeader() {
-  $("#levelValue").textContent = String(state.level).padStart(2, "0");
+  $("#levelValue").textContent = state.mode === "daily" ? "今" : String(state.level).padStart(2, "0");
   $("#deliveredValue").textContent = state.delivered;
   $("#quotaValue").textContent = state.quota;
   $("#coinValue").textContent = state.coins;
@@ -1004,6 +1561,9 @@ function renderHeader() {
   $("#upgradeCost").textContent = `¥${20 + state.insulation * 15}`;
   $("#soundButton").textContent = state.sound ? "♪" : "×";
   $("#soundButton").classList.toggle("muted", !state.sound);
+  if ($("#levelsStatus")) $("#levelsStatus").textContent = `${state.progress.unlockedLevel}/${MAX_LEVEL}`;
+  if ($("#dailyStatus")) $("#dailyStatus").textContent = state.progress.dailyClaimed[dailyKey()] ? "已领奖" : "¥30";
+  if ($("#bagTitle")) $("#bagTitle").textContent = `4×4 · ${currentLevelConfig()?.title || "配送背包"}`;
 }
 
 function renderOrders() {
@@ -1057,6 +1617,8 @@ function renderHand() {
 }
 
 function currentSituation() {
+  const tutorial = tutorialSituation();
+  if (tutorial) return tutorial;
   if (state.hand) {
     const matches = state.items.map((item) => ({ item, recipe: recipeFor(state.hand.type, item.type) })).filter((entry) => entry.recipe);
     const ready = matches.find((entry) => findMergePlacement(entry.recipe.result, [entry.item]));
@@ -1113,35 +1675,98 @@ function currentSituation() {
       badge: selected.timer != null ? String(selected.timer) : "—"
     };
   }
+  const plan = solvabilityPlan({ includeFalling: false });
+  const urgent = plan.missing[0];
   return {
     tone: "", headline: state.falling.size ? `天空正落下${state.falling.size}份外卖` : "下一份外卖马上到",
     subline: state.lastMessage,
-    hint: "按住包裹直接拖进背包；不需要的放过去不会扣分",
+    hint: urgent
+      ? `调度站会持续补发第${urgent.orderIndex + 1}单缺少的${FOOD[urgent.type].name}；漏接也会重算`
+      : "当前订单材料已齐；先整理、合成或点绿色订单交货",
     badge: "—"
   };
+}
+
+function tutorialSituation() {
+  if (!state.tutorialActive) return null;
+  if (state.guideStep === 0) return {
+    tone: "success", headline: "第1步：接住第一杯奶茶",
+    subline: "空中的包裹已经放慢，不会突然消失",
+    hint: "按住正在下落的奶茶，直接拖向背包",
+    badge: "1/5"
+  };
+  if (state.guideStep === 1) return {
+    tone: "success", headline: "第2步：把奶茶放进背包",
+    subline: "背包里所有绿色“+”都能放",
+    hint: "拖到任意绿色“+”松手，食物会自动吸附",
+    badge: "2/5"
+  };
+  if (state.guideStep === 2) return {
+    tone: "success", headline: "第3步：再接一杯奶茶",
+    subline: "第一杯已经放好，第二杯正在天空出现",
+    hint: "按住第二杯往背包拖，这次准备直接合成",
+    badge: "3/5"
+  };
+  if (state.guideStep === 3) {
+    const holding = Boolean(state.hand);
+    return {
+      tone: "success", headline: "第4步：两杯奶茶合成大杯",
+      subline: holding ? "第一杯正在背包里发绿色“合”光" : "两杯都在背包里，也可以互相拖动",
+      hint: holding ? "把手上的奶茶拖到绿色“合”上松手" : "按住一杯奶茶，拖到另一杯上松手",
+      badge: "4/5"
+    };
+  }
+  return {
+    tone: "success", headline: "最后一步：交付大杯奶茶",
+    subline: "顶部第一张订单已经亮绿",
+    hint: "点顶部发光的“大杯奶茶”订单完成配送",
+    badge: "5/5"
+  };
+}
+
+function renderTutorialFocus() {
+  const active = state.tutorialActive;
+  const coach = $("#coachBadge");
+  if (coach) {
+    coach.hidden = !active;
+    coach.textContent = active ? `互动上岗 ${Math.min(5, state.guideStep + 1)}/5` : "";
+  }
+  document.body.classList.toggle("tutorial-active", active);
+  sky.classList.toggle("guide-focus", active && (state.guideStep === 0 || state.guideStep === 2));
+  backpack.classList.toggle("guide-focus", active && (state.guideStep === 1 || state.guideStep === 3));
+  $(".orders-bar")?.classList.toggle("guide-focus", active && state.guideStep === 4);
 }
 
 function renderPressure() {
   const danger = state.items.find((item) => item.timer === 1);
   const situation = currentSituation();
   const wave = currentWave();
+  const assist = state.director.assistLevel;
+  const urgent = solvabilityPlan({ includeFalling: false }).missing[0];
   $(".game-screen").classList.toggle("danger", Boolean(danger));
   backpack.classList.toggle("awaiting-placement", Boolean(state.hand));
   $("#pressureStrip").classList.toggle("danger", Boolean(danger));
-  $("#pressureStrip").textContent = danger
+  $("#pressureStrip").textContent = state.tutorialActive
+    ? `互动教学 ${Math.min(5, state.guideStep + 1)}/5 · 按发光位置操作`
+    : danger
     ? `⚠ ${FOOD[danger.type].name}再接/合成1次就冷掉`
+    : assist > 0
+    ? `智能放缓 ${"■".repeat(assist)}${"□".repeat(3 - assist)} · ${urgent ? `优先补${FOOD[urgent.type].name}` : "材料已齐"}`
     : `${wave.name} ${Math.floor(state.shiftElapsed)}秒 · 行动${state.actionCount}`;
-  $("#skyPrompt").textContent = state.hand ? `拖入绿色格放下${FOOD[state.hand.type].name}` : "按住包裹拖进背包";
+  $("#skyPrompt").textContent = state.hand
+    ? `拖入绿色格放下${FOOD[state.hand.type].name}`
+    : assist > 0 ? "节奏已放缓，优先补订单材料" : "按住包裹拖进背包";
   $("#bagGuide").textContent = situation.hint;
   $("#bagGuide").classList.toggle("danger", situation.tone === "blocked");
+  renderTutorialFocus();
 }
 
 function renderControls() {
   const selected = state.items.find((item) => item.id === state.selectedId);
   const rotatable = state.hand ? FOOD[state.hand.type].rotatable : selected && FOOD[selected.type].rotatable;
-  $("#rotateButton").disabled = !rotatable;
-  $("#pickupButton").disabled = Boolean(state.hand) || !selected || selected.type === "badReview";
-  $("#cancelButton").disabled = !state.hand && !selected;
+  $("#rotateButton").disabled = state.tutorialActive || !rotatable;
+  $("#pickupButton").disabled = state.tutorialActive || Boolean(state.hand) || !selected || selected.type === "badReview";
+  $("#cancelButton").disabled = state.tutorialActive || (!state.hand && !selected);
 }
 
 function renderFallCount() {
@@ -1213,7 +1838,10 @@ function toggleSound() {
 }
 
 async function shareGame() {
-  const text = `我在《外卖落下来啦！》第${state.level}班送了${state.delivered}单，赚到¥${state.shiftIncome}。你能把4×4背包塞得更好吗？`;
+  const result = state.delivered >= state.quota ? evaluateShift() : null;
+  const challenge = state.mode === "daily" ? state.dailyConfig?.title || "今日特送" : `第${state.level}班${LEVEL_CONFIGS[state.level].title}`;
+  const score = result ? `拿到${result.stars}星，用时${result.elapsed}秒` : `已经送了${state.delivered}/${state.quota}单`;
+  const text = `我在《外卖落下来啦！》${challenge}${score}，赚到¥${state.shiftIncome}。你能把4×4背包塞得更好吗？`;
   try {
     if (navigator.share) await navigator.share({ title: "外卖落下来啦！", text, url: location.href });
     else {
@@ -1339,7 +1967,7 @@ function bootGame() {
     // failed/stale tag with a cache-busted loader so the game can self-repair.
     document.querySelectorAll('script[src*="renderer.js"]').forEach((script) => script.remove());
     const loader = document.createElement("script");
-    loader.src = "renderer.js?v=20260717c";
+    loader.src = "renderer.js?v=20260717h";
     loader.onload = () => {
       if (typeof window.createCanvasRenderer !== "function") {
         showBootError(new Error("renderer.js 未注册渲染器"));

@@ -93,6 +93,32 @@
       skyContext.clearRect(0, 0, width, height);
       const state = getState();
       [...state.falling.values()].forEach((drop) => drawDrop(skyContext, drop, dropGeometry(drop, width, height), now));
+      if (state.tutorialActive && (state.guideStep === 0 || state.guideStep === 2)) {
+        const drop = [...state.falling.values()].sort((a, b) => b.progress - a.progress)[0];
+        if (drop) drawSkyCoach(skyContext, dropGeometry(drop, width, height), now);
+      }
+    }
+
+    function drawSkyCoach(context, geometry, now) {
+      const p = colors();
+      const pulse = 1 + (Math.sin(now / 125) + 1) * .08;
+      context.save();
+      context.translate(Math.round(geometry.x + 34), Math.round(geometry.y + 47));
+      context.scale(pulse, pulse);
+      context.fillStyle = p.good;
+      context.strokeStyle = p.ink;
+      context.lineWidth = 3;
+      context.beginPath();
+      context.moveTo(0, 0); context.lineTo(19, -11); context.lineTo(19, -4);
+      context.lineTo(39, -4); context.lineTo(39, 7); context.lineTo(19, 7);
+      context.lineTo(19, 13); context.closePath();
+      context.fill(); context.stroke();
+      context.fillStyle = "white";
+      context.font = "900 10px monospace";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText("按住", 28, 2);
+      context.restore();
     }
 
     function cellRect(x, y, cellSize, inset = 3) {
