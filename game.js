@@ -37,12 +37,6 @@ const ORDER_POOL = [
   { type: "cheeseBurger", level: 2 }, { type: "foamTea", level: 2 },
   { type: "cheeseCombo", level: 3 }, { type: "wholeChicken", level: 3 }
 ];
-const DOWNGRADES = {
-  burgerPatty: ["bread", "beefPatty"], chickenBucket: ["chicken"], bigTea: ["milkTea"],
-  cheeseBurger: ["burgerPatty"], foamTea: ["bigTea", "milkTea"],
-  cheeseCombo: ["cheeseBurger"], wholeChicken: ["chickenBucket"]
-};
-
 const state = {
   items: [], orders: [], falling: new Map(), hand: null, selectedId: null,
   level: 1, quota: 3, delivered: 0, coins: 0, shiftIncome: 0,
@@ -50,7 +44,7 @@ const state = {
   running: false, paused: true, locked: false, sound: true,
   lastMessage: "点击上方正在掉落的包裹",
   scriptedDrops: ["bread", "beefPatty", "chicken", "chicken", "milkTea", "milkTea", "cheese", "cola", "cream"],
-  drag: null, suppressClick: false, theme: "warm"
+  drag: null, suppressClick: false, theme: "warm", actionCount: 0, guideStep: 0
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -68,7 +62,7 @@ function init() {
   bindEvents();
   renderRecipes();
   render();
-  spawnTimer = window.setInterval(spawnDrop, 1900);
+  spawnTimer = window.setInterval(spawnDrop, 1550);
   document.body.dataset.theme = state.theme;
   updateThemeButtons();
 }
@@ -171,7 +165,7 @@ function anyModalOpen() {
 }
 
 function spawnDrop() {
-  if (!state.running || state.paused || state.locked || state.falling.size >= 3) return;
+  if (!state.running || state.paused || state.locked || state.falling.size >= 4) return;
   const type = state.scriptedDrops.length ? state.scriptedDrops.shift() : chooseHelpfulDrop();
   const id = `drop-${state.dropUid++}`;
   const laneLoads = [0, 1, 2].map((lane) => [...state.falling.values()].filter((drop) => drop.lane === lane).length);
@@ -183,7 +177,8 @@ function spawnDrop() {
   element.className = "falling-item";
   element.dataset.dropId = id;
   element.style.setProperty("--lane", lane);
-  element.style.setProperty("--duration", `${6.6 + Math.random() * .9}s`);
+  const fallSeconds = Math.max(4.35, 6.1 - state.level * .16 + Math.random() * .7);
+  element.style.setProperty("--duration", `${fallSeconds}s`);
   element.setAttribute("aria-label", `接住正在降落的${FOOD[type].name}`);
   element.innerHTML = `<span class="parachute"></span><span class="parcel">${foodArtMarkup(type)}</span><span class="falling-name">${FOOD[type].name}</span>`;
   element.addEventListener("click", () => catchDrop(id));
@@ -225,9 +220,10 @@ function catchDrop(id) {
   }
   tickExisting([]);
   state.hand = { type: drop.type, rotation: 0, timer: state.maxFresh, origin: null };
+  state.guideStep = Math.max(state.guideStep, 1);
   state.selectedId = null;
   removeDrop(id, false);
-  showToast(`接住${FOOD[drop.type].name}！点空格放入，或直接点发光目标`, "good");
+  showToast(`接住${FOOD[drop.type].name}！现在点背包里的绿色“+”`, "good");
   playTone(520, .07);
   render();
   window.setTimeout(() => mobileFocus(backpack), 80);
@@ -276,10 +272,72 @@ function itemAt(x, y) {
   return state.items.find((item) => itemCells(item).some(([cx, cy]) => cx === x && cy === y));
 }
 
-function canPlace(type, x, y, rotation = 0, ignoreIds = [], shapeOverride = null) {
+function placementDetails(type, x, y, rotation = 0, ignoreIds = [], shapeOverride = null) {
   const cells = (shapeOverride || shapeFor(type, rotation)).map(([dx, dy]) => [x + dx, y + dy]);
-  if (cells.some(([cx, cy]) => cx < 0 || cy < 0 || cx >= GRID || cy >= GRID)) return false;
-  return cells.every(([cx, cy]) => !state.items.some((item) => !ignoreIds.includes(item.id) && itemCells(item).some(([ix, iy]) => ix === cx && iy === cy)));
+  const outside = cells.filter(([cx, cy]) => cx < 0 || cy < 0 || cx >= GRID || cy >= GRID);
+  const blockers = state.items.filter((item) => !ignoreIds.includes(item.id) && cells.some(([cx, cy]) => itemCells(item).some(([ix, iy]) => ix === cx && iy === cy)));
+  return { valid: outside.length === 0 && blockers.length === 0, cells, outside, blockers };
+}
+
+function canPlace(type, x, y, rotation = 0, ignoreIds = [], shapeOverride = null) {
+  return placementDetails(type, x, y, rotation, ignoreIds, shapeOverride).valid;
+}
+
+function availableRotations(type) {
+  return FOOD[type].rotatable ? [0, 1, 2, 3] : [0];
+}
+
+function validPlacements(type, ignoreIds = [], shapeOverride = null) {
+  const options = [];
+  availableRotations(type).forEach((rotation) => {
+    for (let y = 0; y < GRID; y += 1) {
+      for (let x = 0; x < GRID; x += 1) {
+        if (canPlace(type, x, y, rotation, ignoreIds, shapeOverride)) options.push({ x, y, rotation });
+      }
+    }
+  });
+  return options;
+}
+
+function nearestPlacement(type, tapX, tapY, rotation = 0, ignoreIds = [], shapeOverride = null) {
+  return validPlacements(type, ignoreIds, shapeOverride)
+    .filter((option) => option.rotation === rotation)
+    .sort((a, b) => Math.hypot(a.x - tapX, a.y - tapY) - Math.hypot(b.x - tapX, b.y - tapY))[0] || null;
+}
+
+function findMergePlacement(resultType, consumedItems) {
+  const ignoreIds = consumedItems.map((item) => item.id);
+  const centerX = consumedItems.reduce((sum, item) => sum + item.x, 0) / consumedItems.length;
+  const centerY = consumedItems.reduce((sum, item) => sum + item.y, 0) / consumedItems.length;
+  return validPlacements(resultType, ignoreIds)
+    .sort((a, b) => {
+      const distanceA = Math.hypot(a.x - centerX, a.y - centerY);
+      const distanceB = Math.hypot(b.x - centerX, b.y - centerY);
+      return distanceA - distanceB || a.rotation - b.rotation || a.y - b.y || a.x - b.x;
+    })[0] || null;
+}
+
+function bestBlockedPlacement(resultType, consumedItems) {
+  const ignoreIds = consumedItems.map((item) => item.id);
+  const attempts = [];
+  availableRotations(resultType).forEach((rotation) => {
+    for (let y = 0; y < GRID; y += 1) {
+      for (let x = 0; x < GRID; x += 1) {
+        const details = placementDetails(resultType, x, y, rotation, ignoreIds);
+        attempts.push({ x, y, rotation, details, score: details.outside.length * 5 + details.blockers.length });
+      }
+    }
+  });
+  return attempts.sort((a, b) => a.score - b.score || a.y - b.y || a.x - b.x)[0];
+}
+
+function mergeSpaceMessage(resultType, consumedItems) {
+  const best = bestBlockedPlacement(resultType, consumedItems);
+  if (!best) return `${FOOD[resultType].name}没有可用落点；先拖动整理背包`;
+  const blockerNames = [...new Set(best.details.blockers.map((item) => FOOD[item.type].name))];
+  if (best.details.outside.length === 0) showPreview(resultType, best.x, best.y, best.rotation, consumedItems.map((item) => item.id));
+  const blockedBy = blockerNames.length ? `，被${blockerNames.join("、")}挡住` : "，空格太零散";
+  return `${FOOD[resultType].name}需要${shapeLabel(resultType)}的连续空间${blockedBy}；先拖动整理`;
 }
 
 function recipeFor(a, b) {
@@ -330,18 +388,28 @@ function handleItemClick(item) {
 
 function placeHand(x, y) {
   if (!state.hand) return;
+  let placement = { x, y, rotation: state.hand.rotation };
+  let snapped = false;
   if (!canPlace(state.hand.type, x, y, state.hand.rotation)) {
-    showToast("这个位置放不下，先整理背包", "bad");
+    placement = nearestPlacement(state.hand.type, x, y, state.hand.rotation);
+    snapped = Boolean(placement);
+  }
+  if (!placement) {
+    const required = shapeLabel(state.hand.type);
+    showToast(`${FOOD[state.hand.type].name}需要${required}的连续空位；拖动食物腾位置，或点“放弃”`, "bad");
     bump(backpack);
+    state.lastMessage = `放不下：需要${required}连续空位`;
+    render();
     return;
   }
-  const item = createItem(state.hand.type, x, y, state.hand.rotation, state.hand.timer);
+  const item = createItem(state.hand.type, placement.x, placement.y, placement.rotation, state.hand.timer);
   state.items.push(item);
   const name = FOOD[state.hand.type].name;
   state.hand = null;
   state.selectedId = item.id;
+  state.guideStep = Math.max(state.guideStep, 2);
   state.lastMessage = `${name}已放入背包`;
-  showToast(`${name}已放入背包，拖动它可以继续整理`, "good");
+  showToast(snapped ? `${name}已自动贴齐最近的绿色格` : `${name}已放入背包；拖动可以整理`, "good");
   playTone(370, .05);
   render();
   window.setTimeout(() => mobileFocus(sky), 90);
@@ -351,24 +419,30 @@ function attemptHandMerge(target) {
   if (!state.hand || target.type === "badReview") return;
   const recipe = recipeFor(state.hand.type, target.type);
   if (!recipe) {
-    showToast(`${FOOD[state.hand.type].name}不能和${FOOD[target.type].name}合成`, "bad");
+    const possible = RECIPES.filter((entry) => entry.a === state.hand.type || entry.b === state.hand.type)
+      .map((entry) => FOOD[entry.a === state.hand.type ? entry.b : entry.a].name);
+    showToast(`${FOOD[state.hand.type].name}不能和${FOOD[target.type].name}合成${possible.length ? `；请找${possible.join("或")}` : ""}`, "bad");
     bump(targetElement(target.id));
     return;
   }
-  if (!canPlace(recipe.result, target.x, target.y, 0, [target.id])) {
-    showToast(`${FOOD[recipe.result].name}会变成${shapeLabel(recipe.result)}，目标旁边空间不够`, "bad");
+  const placement = findMergePlacement(recipe.result, [target]);
+  if (!placement) {
+    const reason = mergeSpaceMessage(recipe.result, [target]);
+    showToast(reason, "bad");
+    state.lastMessage = reason;
     bump(targetElement(target.id));
-    showPreview(recipe.result, target.x, target.y, 0, [target.id]);
-    window.setTimeout(clearPreview, 700);
+    window.setTimeout(clearPreview, 1300);
+    renderHand();
     return;
   }
   tickExisting([target.id]);
   state.items = state.items.filter((item) => item.id !== target.id);
-  const result = createItem(recipe.result, target.x, target.y, 0, state.maxFresh);
+  const result = createItem(recipe.result, placement.x, placement.y, placement.rotation, state.maxFresh);
   state.items.push(result);
   const handName = FOOD[state.hand.type].name;
   state.hand = null;
   state.selectedId = result.id;
+  state.guideStep = Math.max(state.guideStep, 3);
   state.lastMessage = `刚合成：${FOOD[result.type].name}`;
   showToast(`${handName}直接合成成功：${FOOD[result.type].name}！鲜度回满`, "good");
   playMergeSound();
@@ -378,17 +452,21 @@ function attemptHandMerge(target) {
 }
 
 function mergeBagItems(first, second, resultType) {
-  if (!canPlace(resultType, second.x, second.y, 0, [first.id, second.id])) {
-    showToast(`${FOOD[resultType].name}会变成${shapeLabel(resultType)}，请先给它腾位置`, "bad");
-    showPreview(resultType, second.x, second.y, 0, [first.id, second.id]);
-    window.setTimeout(clearPreview, 700);
+  const placement = findMergePlacement(resultType, [first, second]);
+  if (!placement) {
+    const reason = mergeSpaceMessage(resultType, [first, second]);
+    showToast(reason, "bad");
+    state.lastMessage = reason;
+    window.setTimeout(clearPreview, 1300);
+    renderHand();
     return;
   }
   tickExisting([first.id, second.id]);
   state.items = state.items.filter((item) => item.id !== first.id && item.id !== second.id);
-  const result = createItem(resultType, second.x, second.y, 0, state.maxFresh);
+  const result = createItem(resultType, placement.x, placement.y, placement.rotation, state.maxFresh);
   state.items.push(result);
   state.selectedId = result.id;
+  state.guideStep = Math.max(state.guideStep, 3);
   state.lastMessage = `刚合成：${FOOD[resultType].name}`;
   showToast(`合成成功：${FOOD[resultType].name}！鲜度回满`, "good");
   playMergeSound();
@@ -397,6 +475,7 @@ function mergeBagItems(first, second, resultType) {
 }
 
 function tickExisting(ignoreIds) {
+  state.actionCount += 1;
   const expired = [];
   state.items.forEach((item) => {
     if (item.type === "badReview" || ignoreIds.includes(item.id)) return;
@@ -556,23 +635,24 @@ function deliverOrder(orderId) {
   const candidates = state.items.filter((item) => item.timer > 0 && canFulfill(order.type, item.type));
   const selectedCandidate = candidates.find((item) => item.id === state.selectedId);
   const exact = candidates.filter((item) => item.type === order.type).sort((a, b) => a.timer - b.timer)[0];
-  const item = selectedCandidate || exact || candidates.sort((a, b) => a.timer - b.timer)[0];
+  const item = selectedCandidate || exact || candidates.sort((a, b) => FOOD[a.type].value - FOOD[b.type].value || a.timer - b.timer)[0];
   if (!item) {
-    showToast(`背包里还没有能交付的${FOOD[order.type].name}`, "bad");
+    showToast(explainOrderFailure(order.type), "bad");
     bump($("#ordersList"));
     return;
   }
   const payout = FOOD[item.type].value;
-  const downgraded = item.type !== order.type;
+  const upgraded = item.type !== order.type;
   state.items = state.items.filter((candidate) => candidate.id !== item.id);
   state.selectedId = null;
   state.coins += payout;
   state.shiftIncome += payout;
   state.delivered += 1;
+  state.guideStep = Math.max(state.guideStep, 4);
   order.done = true;
   state.lastMessage = `已交付${FOOD[item.type].name}，收入 ¥${payout}`;
   saveProgress();
-  showToast(`${downgraded ? "低配" : "完美"}送达！${FOOD[item.type].name}收入 ¥${payout}`, "good");
+  showToast(`${upgraded ? "高阶替代" : "精准"}送达！${FOOD[item.type].name}收入 ¥${payout}`, "good");
   playTone(760, .08); window.setTimeout(() => playTone(960, .09), 70);
   render();
   if (state.delivered >= state.quota) {
@@ -593,7 +673,33 @@ function deliverOrder(orderId) {
 }
 
 function canFulfill(orderType, itemType) {
-  return orderType === itemType || (DOWNGRADES[orderType] || []).includes(itemType);
+  if (orderType === itemType) return true;
+  if (FOOD[itemType].value <= FOOD[orderType].value) return false;
+  const visited = new Set([orderType]);
+  const queue = [orderType];
+  while (queue.length) {
+    const current = queue.shift();
+    const next = RECIPES.filter((recipe) => recipe.a === current || recipe.b === current).map((recipe) => recipe.result);
+    for (const result of next) {
+      if (result === itemType) return true;
+      if (!visited.has(result)) { visited.add(result); queue.push(result); }
+    }
+  }
+  return false;
+}
+
+function orderUpgrades(orderType) {
+  return Object.keys(FOOD).filter((type) => type !== "badReview" && canFulfill(orderType, type) && type !== orderType)
+    .sort((a, b) => FOOD[a].value - FOOD[b].value);
+}
+
+function explainOrderFailure(orderType) {
+  if (state.hand && canFulfill(orderType, state.hand.type)) return `${FOOD[state.hand.type].name}还在手上；先点绿色“+”放进背包，再点订单`;
+  const ingredient = state.items.find((item) => item.timer > 0 && item.type !== orderType && baseIngredients(orderType).includes(item.type));
+  if (ingredient) return `不能直接交：${FOOD[ingredient.type].name}只是${FOOD[orderType].name}的原料，必须先合成`;
+  const lower = state.items.find((item) => item.timer > 0 && FOOD[item.type].value < FOOD[orderType].value);
+  if (lower) return `${FOOD[lower.type].name}等级低于${FOOD[orderType].name}，不能越级交单；高阶成品可以替代低阶订单`;
+  return `背包里还没有${FOOD[orderType].name}；也可以交更高阶的${orderUpgrades(orderType).map((type) => FOOD[type].name).join("或") || "同系列成品"}`;
 }
 
 function chooseOrder() {
@@ -656,6 +762,7 @@ function render() {
   renderOrders();
   renderItems();
   renderHand();
+  renderPressure();
   renderControls();
   paintSprites(document);
 }
@@ -665,7 +772,8 @@ function renderHeader() {
   $("#deliveredValue").textContent = state.delivered;
   $("#quotaValue").textContent = state.quota;
   $("#coinValue").textContent = state.coins;
-  $("#freshnessLabel").textContent = `鲜度${state.maxFresh}`;
+  const danger = state.items.some((item) => item.timer === 1);
+  $("#freshnessLabel").textContent = danger ? "有餐将冷" : `鲜度${state.maxFresh}`;
   $("#upgradeCost").textContent = `¥${20 + state.insulation * 15}`;
   $("#soundButton").textContent = state.sound ? "♪" : "×";
   $("#soundButton").classList.toggle("muted", !state.sound);
@@ -676,11 +784,11 @@ function renderOrders() {
   list.innerHTML = "";
   state.orders.forEach((order, index) => {
     const ready = state.items.some((item) => item.timer > 0 && canFulfill(order.type, item.type));
-    const alternatives = (DOWNGRADES[order.type] || []).map((type) => FOOD[type].name).join(" / ");
+    const upgrades = orderUpgrades(order.type).map((type) => FOOD[type].name).join(" / ");
     const button = document.createElement("button");
     button.type = "button";
     button.className = `order-card${ready ? " ready" : ""}${order.done ? " done" : ""}`;
-    button.innerHTML = `<span class="order-art">${foodArtMarkup(order.type)}</span><span class="order-copy"><strong>${index + 1}. ${FOOD[order.type].name} ×1</strong><span>${shapeLabel(order.type)} · ${FOOD[order.type].desc}</span><span>${alternatives ? `可低配：${alternatives}` : "点击提交订单"}</span></span><b class="order-price">¥${FOOD[order.type].value}</b>`;
+    button.innerHTML = `<span class="order-art">${foodArtMarkup(order.type)}</span><span class="order-copy"><strong>${index + 1}. ${FOOD[order.type].name} ×1</strong><span>${shapeLabel(order.type)} · ${FOOD[order.type].desc}</span><span>${upgrades ? `可用高阶：${upgrades}` : "只收同款成品"}</span></span><b class="order-price">¥${FOOD[order.type].value}</b>`;
     button.addEventListener("click", () => deliverOrder(order.id));
     list.appendChild(button);
   });
@@ -694,10 +802,11 @@ function renderItems() {
     const height = Math.max(...shape.map(([, y]) => y)) + 1;
     const selected = state.selectedId === item.id;
     const handRecipe = state.hand && recipeFor(state.hand.type, item.type);
-    const mergeFits = handRecipe && canPlace(handRecipe.result, item.x, item.y, 0, [item.id]);
+    const mergeFits = handRecipe && Boolean(findMergePlacement(handRecipe.result, [item]));
+    const incompatible = state.hand && !handRecipe && item.type !== "badReview";
     const element = document.createElement("button");
     element.type = "button";
-    element.className = `bag-item${selected ? " selected" : ""}${handRecipe ? " compatible" : ""}${handRecipe && !mergeFits ? " merge-blocked" : ""}${item.type === "badReview" ? " bad-review" : ""}`;
+    element.className = `bag-item${selected ? " selected" : ""}${handRecipe && mergeFits ? " compatible" : ""}${handRecipe && !mergeFits ? " merge-blocked" : ""}${incompatible ? " incompatible" : ""}${item.type === "badReview" ? " bad-review" : ""}`;
     element.dataset.id = item.id;
     element.style.left = `${item.x * 25}%`;
     element.style.top = `${item.y * 25}%`;
@@ -710,7 +819,9 @@ function renderItems() {
   });
   backpack.querySelectorAll(".grid-cell").forEach((cell) => {
     const x = Number(cell.dataset.x); const y = Number(cell.dataset.y);
-    cell.classList.toggle("hand-anchor", Boolean(state.hand && canPlace(state.hand.type, x, y, state.hand.rotation)));
+    const valid = Boolean(state.hand && canPlace(state.hand.type, x, y, state.hand.rotation));
+    cell.classList.toggle("hand-anchor", valid);
+    cell.setAttribute("aria-label", valid ? `点这里放下${FOOD[state.hand.type].name}` : `背包第${y + 1}行第${x + 1}列`);
   });
 }
 
@@ -718,22 +829,101 @@ function renderHand() {
   const tray = $("#handTray");
   const visual = $("#handVisual");
   const text = $("#handText");
+  const situation = currentSituation();
+  tray.classList.remove("success", "blocked");
+  if (situation.tone) tray.classList.add(situation.tone);
   if (!state.hand) {
     tray.classList.add("empty");
     visual.innerHTML = '<span class="empty-hand">✋</span>';
-    text.innerHTML = `<strong>手上是空的</strong><span>${state.lastMessage}</span>`;
-    $("#handHint").textContent = "点击上方包裹接住下一份外卖";
-    $("#handFresh").textContent = "—";
+    text.innerHTML = `<strong>${situation.headline}</strong><span>${situation.subline}</span>`;
+    $("#handHint").textContent = situation.hint;
+    $("#handFresh").innerHTML = situation.badge || "—";
     return;
   }
   tray.classList.remove("empty");
   visual.innerHTML = foodArtMarkup(state.hand.type);
-  const recipes = RECIPES.filter((recipe) => recipe.a === state.hand.type || recipe.b === state.hand.type);
-  text.innerHTML = `<strong>手持：${FOOD[state.hand.type].name}</strong><span>${shapeLabel(state.hand.type)} · ${FOOD[state.hand.type].desc}</span>`;
-  $("#handHint").textContent = recipes.length
-    ? recipes.map((recipe) => `${FOOD[state.hand.type].name} + ${FOOD[recipe.a === state.hand.type ? recipe.b : recipe.a].name} → ${FOOD[recipe.result].name}`).join(" / ")
-    : "点击绿色空格放入背包";
-  $("#handFresh").textContent = state.hand.timer;
+  text.innerHTML = `<strong>${situation.headline}</strong><span>${situation.subline}</span>`;
+  $("#handHint").textContent = situation.hint;
+  $("#handFresh").innerHTML = `${state.hand.timer}<small>鲜度</small>`;
+}
+
+function currentSituation() {
+  if (state.hand) {
+    const matches = state.items.map((item) => ({ item, recipe: recipeFor(state.hand.type, item.type) })).filter((entry) => entry.recipe);
+    const ready = matches.find((entry) => findMergePlacement(entry.recipe.result, [entry.item]));
+    if (ready) return {
+      tone: "success", headline: `手持${FOOD[state.hand.type].name} · 可以合成`,
+      subline: `背包中的${FOOD[ready.item.type].name}正在发绿光`,
+      hint: `点绿色“合” → ${FOOD[ready.recipe.result].name}（必定成功）`
+    };
+    if (matches.length) {
+      const recipe = matches[0].recipe;
+      return {
+        tone: "blocked", headline: `配方正确，但${FOOD[recipe.result].name}放不下`,
+        subline: `成品会占${shapeLabel(recipe.result)}`,
+        hint: `红色“!”不是失灵：先拖动食物，腾出连续空间`
+      };
+    }
+    const placements = validPlacements(state.hand.type).filter((option) => option.rotation === state.hand.rotation);
+    if (placements.length) {
+      const partners = RECIPES.filter((recipe) => recipe.a === state.hand.type || recipe.b === state.hand.type)
+        .map((recipe) => FOOD[recipe.a === state.hand.type ? recipe.b : recipe.a].name);
+      return {
+        tone: "", headline: `手持${FOOD[state.hand.type].name} · 找绿色“+”`,
+        subline: `${shapeLabel(state.hand.type)}，有${placements.length}个位置能放`,
+        hint: partners.length ? `现在点绿色“+”放下；遇到${partners.join("或")}可直接点它合成` : "现在点任意绿色“+”放进背包"
+      };
+    }
+    return {
+      tone: "blocked", headline: `手持${FOOD[state.hand.type].name} · 背包已卡住`,
+      subline: `缺少${shapeLabel(state.hand.type)}的连续空位`,
+      hint: "先点“放弃”，再拖动整理；整理和旋转不扣鲜度"
+    };
+  }
+  const danger = state.items.filter((item) => item.timer === 1);
+  const readyOrder = state.orders.find((order) => state.items.some((item) => item.timer > 0 && canFulfill(order.type, item.type)));
+  if (danger.length) return {
+    tone: "blocked", headline: `危险：${FOOD[danger[0].type].name}只剩1步`,
+    subline: "再接一份或再合成一次，它就会冷掉",
+    hint: readyOrder ? `先点顶部${FOOD[readyOrder.type].name}订单交货；交单和整理不扣鲜度` : "先整理或准备交单；不要急着接下一份",
+    badge: "1<small>步</small>"
+  };
+  if (readyOrder) return {
+    tone: "success", headline: `${FOOD[readyOrder.type].name}订单已亮绿`,
+    subline: state.lastMessage,
+    hint: "点顶部绿色订单立即交货；高阶成品也能交低阶订单",
+    badge: "✓"
+  };
+  const selected = state.items.find((item) => item.id === state.selectedId);
+  if (selected) {
+    const partner = state.items.find((item) => item.id !== selected.id && recipeFor(selected.type, item.type));
+    return {
+      tone: partner ? "success" : "", headline: `已选${FOOD[selected.type].name}`,
+      subline: partner ? `${FOOD[partner.type].name}可以和它合成` : "可拖动整理，也可拿到手上",
+      hint: partner ? `再点${FOOD[partner.type].name}直接合成` : "拖到空格整理；旋转与移动都不扣鲜度",
+      badge: selected.timer != null ? String(selected.timer) : "—"
+    };
+  }
+  return {
+    tone: "", headline: state.falling.size ? `天空正落下${state.falling.size}份外卖` : "下一份外卖马上到",
+    subline: state.lastMessage,
+    hint: "只接订单需要的材料；不需要的放过去不会扣分",
+    badge: "—"
+  };
+}
+
+function renderPressure() {
+  const danger = state.items.find((item) => item.timer === 1);
+  const situation = currentSituation();
+  $(".game-screen").classList.toggle("danger", Boolean(danger));
+  backpack.classList.toggle("awaiting-placement", Boolean(state.hand));
+  $("#pressureStrip").classList.toggle("danger", Boolean(danger));
+  $("#pressureStrip").textContent = danger
+    ? `⚠ ${FOOD[danger.type].name}再接/合成1次就冷掉`
+    : `行动${state.actionCount} · 接取/合成会让已有食物-1`;
+  $("#skyPrompt").textContent = state.hand ? `先放下手里的${FOOD[state.hand.type].name}` : "点击接住外卖";
+  $("#bagGuide").textContent = situation.hint;
+  $("#bagGuide").classList.toggle("danger", situation.tone === "blocked");
 }
 
 function renderControls() {
