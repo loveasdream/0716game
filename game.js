@@ -78,14 +78,101 @@ const toast = $("#toast");
 let toastTimer = null;
 let audioContext = null;
 let renderer = null;
+let initialized = false;
 const spriteCache = new Map();
 
+function ensureCanvasStructure() {
+  if (!sky || !backpack) throw new Error("页面缺少游戏主区域，请重新上传 index.html");
+
+  let skyPrompt = $("#skyPrompt");
+  if (!skyPrompt) {
+    skyPrompt = sky.querySelector(".sky-title strong") || document.createElement("strong");
+    skyPrompt.id = "skyPrompt";
+    if (!skyPrompt.parentElement) sky.prepend(skyPrompt);
+  }
+
+  let pressureStrip = $("#pressureStrip");
+  if (!pressureStrip) {
+    pressureStrip = document.createElement("div");
+    pressureStrip.id = "pressureStrip";
+    pressureStrip.className = "pressure-strip";
+    pressureStrip.textContent = "接取或合成 = 背包鲜度 -1";
+    sky.appendChild(pressureStrip);
+  }
+
+  const bagTopline = document.querySelector(".bag-topline");
+  let bagTitle = $("#bagTitle");
+  if (!bagTitle && bagTopline) {
+    bagTitle = bagTopline.querySelector("span") || document.createElement("span");
+    bagTitle.id = "bagTitle";
+    if (!bagTitle.parentElement) bagTopline.appendChild(bagTitle);
+  }
+  let bagGuide = $("#bagGuide");
+  if (!bagGuide && bagTopline) {
+    bagGuide = bagTopline.querySelector("b") || document.createElement("b");
+    bagGuide.id = "bagGuide";
+    if (!bagGuide.parentElement) bagTopline.appendChild(bagGuide);
+  }
+
+  let skyCanvas = $("#skyCanvas");
+  if (!skyCanvas) {
+    skyCanvas = document.createElement("canvas");
+    skyCanvas.id = "skyCanvas";
+    skyCanvas.className = "sky-canvas";
+    skyCanvas.setAttribute("aria-hidden", "true");
+    sky.insertBefore(skyCanvas, sky.firstChild);
+  }
+
+  let bagCanvas = $("#bagCanvas");
+  if (!bagCanvas) {
+    bagCanvas = document.createElement("canvas");
+    bagCanvas.id = "bagCanvas";
+    bagCanvas.className = "bag-canvas";
+    backpack.appendChild(bagCanvas);
+  }
+
+  let dragCanvas = $("#dragCanvas");
+  if (!dragCanvas) {
+    dragCanvas = document.createElement("canvas");
+    dragCanvas.id = "dragCanvas";
+    dragCanvas.className = "drag-canvas";
+    dragCanvas.setAttribute("aria-hidden", "true");
+    document.body.appendChild(dragCanvas);
+  }
+
+  // Inline fallbacks keep mixed old/new deployments playable even before the
+  // browser refreshes a cached stylesheet.
+  Object.assign(skyCanvas.style, {
+    position: "absolute", inset: "0", width: "100%", height: "100%",
+    zIndex: "3", imageRendering: "pixelated", touchAction: "none"
+  });
+  Object.assign(bagCanvas.style, {
+    position: "absolute", inset: "0", width: "100%", height: "100%",
+    zIndex: "5", imageRendering: "pixelated", touchAction: "none"
+  });
+  Object.assign(dragCanvas.style, {
+    position: "fixed", inset: "0", width: "100vw", height: "100dvh",
+    zIndex: "450", imageRendering: "pixelated", pointerEvents: "none"
+  });
+  Object.assign(pressureStrip.style, {
+    position: "absolute", left: "8px", right: "8px", bottom: "6px", zIndex: "6"
+  });
+  sky.style.touchAction = "none";
+  if (window.getComputedStyle(sky).position === "static") sky.style.position = "relative";
+  if (window.getComputedStyle(backpack).position === "static") backpack.style.position = "relative";
+
+  return { skyCanvas, bagCanvas, dragCanvas };
+}
+
 function init() {
+  if (initialized) return;
+  initialized = true;
+  const canvases = ensureCanvasStructure();
   loadProgress();
   buildGrid();
   configureLevel(1);
   renderer = window.createCanvasRenderer({
-    skyCanvas: $("#skyCanvas"), bagCanvas: $("#bagCanvas"), dragCanvas: $("#dragCanvas"),
+    skyCanvas: canvases.skyCanvas, bagCanvas: canvases.bagCanvas, dragCanvas: canvases.dragCanvas,
     getState: () => state, getFood: (type) => FOOD[type],
     getShape: (type, rotation, override) => override || shapeFor(type, rotation),
     getItemCells: (item) => itemCells(item), canPlace, recipeFor, findMergePlacement,
@@ -117,7 +204,8 @@ function saveProgress() {
 }
 
 function buildGrid() {
-  $("#bagCanvas").setAttribute("aria-label", "四乘四配送背包，可拖动食物整理或合成");
+  const { bagCanvas } = ensureCanvasStructure();
+  bagCanvas.setAttribute("aria-label", "四乘四配送背包，可拖动食物整理或合成");
 }
 
 function bindEvents() {
@@ -1221,4 +1309,49 @@ function drawFood(canvas, type) {
   else if (type === "badReview") { outlineBox(2,2,12,12,"#596069");r(5,6,2,2,"#c6cbd0");r(10,6,2,2,"#c6cbd0");r(5,11,7,2,O);r(4,3,2,2,"#7e858c");r(11,2,2,3,"#7e858c"); }
 }
 
-init();
+function showBootError(error) {
+  console.error("游戏启动失败", error);
+  const message = "游戏资源没有加载完整，请刷新页面；如果仍失败，请重新上传 renderer.js";
+  if (toast) {
+    toast.textContent = message;
+    toast.className = "toast show bad";
+  } else {
+    const warning = document.createElement("div");
+    warning.textContent = message;
+    Object.assign(warning.style, {
+      position: "fixed", left: "12px", right: "12px", top: "12px", zIndex: "9999",
+      padding: "14px", color: "#fff", background: "#9f2f32", fontSize: "16px",
+      textAlign: "center", border: "3px solid #fff"
+    });
+    document.body.appendChild(warning);
+  }
+}
+
+function bootGame() {
+  try {
+    ensureCanvasStructure();
+    if (typeof window.createCanvasRenderer === "function") {
+      init();
+      return;
+    }
+
+    // An older cached index.html may not contain renderer.js at all. Replace a
+    // failed/stale tag with a cache-busted loader so the game can self-repair.
+    document.querySelectorAll('script[src*="renderer.js"]').forEach((script) => script.remove());
+    const loader = document.createElement("script");
+    loader.src = "renderer.js?v=20260717c";
+    loader.onload = () => {
+      if (typeof window.createCanvasRenderer !== "function") {
+        showBootError(new Error("renderer.js 未注册渲染器"));
+        return;
+      }
+      init();
+    };
+    loader.onerror = () => showBootError(new Error("renderer.js 加载失败"));
+    document.head.appendChild(loader);
+  } catch (error) {
+    showBootError(error);
+  }
+}
+
+bootGame();
