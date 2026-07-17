@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#f3b85f" />
+  <title>外卖落下来啦！</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-theme="warm">
+  <div class="screen-texture" aria-hidden="true"></div>
+
+  <main class="game-screen pixel-frame">
+    <header class="hud">
+      <div class="mini-logo"><span class="rider-head"></span><strong>外卖落下来啦！</strong></div>
+      <div class="hud-stats">
+        <span><small>班次</small><b id="levelValue">01</b></span>
+        <span><small>送达</small><b><i id="deliveredValue">0</i>/<i id="quotaValue">3</i></b></span>
+        <span class="money"><small>零钱</small><b>¥<i id="coinValue">0</i></b></span>
+      </div>
+      <div class="hud-buttons">
+        <button id="soundButton" aria-label="开关音效">♪</button>
+        <button id="menuButton" aria-label="打开菜单">☰</button>
+      </div>
+    </header>
+
+    <section class="orders-bar" aria-label="待配送订单">
+      <div class="orders-label"><b>订单</b><span id="freshnessLabel">鲜度3</span></div>
+      <div id="ordersList" class="orders-list"></div>
+    </section>
+
+    <section id="sky" class="sky" aria-label="从天而降的外卖接取区域">
+      <div class="sky-title"><strong>点击接住外卖</strong><span id="fallCount">天空中 0 份</span></div>
+      <div class="cloud cloud-one"></div><div class="cloud cloud-two"></div>
+      <div class="drop-lanes"><i></i><i></i><i></i></div>
+      <div class="city"></div>
+      <div class="road"></div>
+      <div id="missedLabel" class="missed-label">不需要的可以放过</div>
+    </section>
+
+    <section id="handTray" class="context-bar empty" aria-live="polite">
+      <div id="handVisual" class="hand-visual"><span class="empty-hand">✋</span></div>
+      <div class="context-copy">
+        <div id="handText" class="hand-text"><strong>手上是空的</strong><span>点击上方正在掉落的包裹</span></div>
+        <p id="handHint">接住后可以放进背包，或直接点击配方目标</p>
+      </div>
+      <div id="handFresh" class="hand-fresh">—</div>
+    </section>
+
+    <section class="bag-viewport">
+      <div class="bag-stage">
+        <div class="bag-topline"><span>4×4 配送背包</span><b>拖动整理</b></div>
+        <div id="backpack" class="backpack" role="grid" aria-label="四乘四配送背包"></div>
+      </div>
+    </section>
+
+    <nav class="game-controls" aria-label="背包操作">
+      <button id="rotateButton" disabled><i>↻</i><span>旋转</span></button>
+      <button id="pickupButton" disabled><i>↥</i><span>拿起</span></button>
+      <button id="cancelButton" disabled><i>×</i><span>放弃</span></button>
+      <button id="recipeButton"><i>?</i><span>配方</span></button>
+    </nav>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="assertive"></div>
+
+  <div id="startModal" class="modal-backdrop">
+    <section class="modal start-modal pixel-frame" role="dialog" aria-modal="true" aria-labelledby="startTitle">
+      <p class="modal-kicker">首次上岗</p>
+      <h2 id="startTitle">接住、合成、装进背包</h2>
+      <div class="tutorial-steps">
+        <article><b>1</b><strong>点天空中的包裹</strong><span>不需要的可以放过</span></article>
+        <article><b>2</b><strong>看中间的大字提示</strong><span>它会告诉你拿了什么、能合成什么</span></article>
+        <article><b>3</b><strong>拖动整理4×4背包</strong><span>大菜变大前要先腾位置</span></article>
+      </div>
+      <button id="startButton" class="primary-button">开始第一班</button>
+      <p class="modal-note">游戏中不需要上下滚动，订单、天空、手持物和背包会同时显示。</p>
+    </section>
+  </div>
+
+  <div id="menuModal" class="modal-backdrop" hidden>
+    <section class="modal menu-modal pixel-frame" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
+      <button class="close-button" data-close-modal>×</button>
+      <p class="modal-kicker">DELIVERY STATION</p>
+      <h2 id="menuTitle">配送站</h2>
+      <div class="menu-actions">
+        <button id="upgradeButton" class="menu-action"><i>▥</i><span><strong>升级保温包</strong><small>以后接到和合成的食物鲜度 +1</small></span><b id="upgradeCost">¥20</b></button>
+        <button id="eraserButton" class="menu-action"><i>✦</i><span><strong>差评橡皮</strong><small>清除背包中选中的完整差评块</small></span><b>¥12</b></button>
+        <button id="themeButton" class="menu-action"><i>◈</i><span><strong>配送站外观</strong><small>暖阳小铺与霓虹夜送，纯外观</small></span><b>›</b></button>
+        <button id="helpButton" class="menu-action"><i>?</i><span><strong>重新查看教学</strong><small>接取、合成与整理说明</small></span><b>›</b></button>
+        <button id="shareButton" class="menu-action"><i>↗</i><span><strong>分享给朋友试玩</strong><small>发送当前成绩与网页链接</small></span><b>›</b></button>
+      </div>
+    </section>
+  </div>
+
+  <div id="recipeModal" class="modal-backdrop" hidden>
+    <section class="modal recipe-modal pixel-frame" role="dialog" aria-modal="true" aria-labelledby="recipeTitle">
+      <button class="close-button" data-close-modal>×</button>
+      <p class="modal-kicker">FAST FOOD COOKBOOK</p>
+      <h2 id="recipeTitle">快餐篇 · 配方图鉴</h2>
+      <div id="recipeList" class="recipe-list"></div>
+      <p class="modal-note">游戏中不必背配方：接住食物后，中间提示栏会用大字告诉你可以点击谁合成。</p>
+    </section>
+  </div>
+
+  <div id="themeModal" class="modal-backdrop" hidden>
+    <section class="modal theme-modal pixel-frame" role="dialog" aria-modal="true" aria-labelledby="themeTitle">
+      <button class="close-button" data-close-modal>×</button>
+      <p class="modal-kicker">VISUAL SKINS</p>
+      <h2 id="themeTitle">配送站外观</h2>
+      <div class="theme-grid">
+        <button class="theme-card active" data-theme-choice="warm"><span class="theme-preview warm-preview"><i></i><i></i><i></i></span><strong>暖阳小铺</strong><small>已拥有 · 纯外观</small></button>
+        <button class="theme-card" data-theme-choice="cyber"><span class="theme-preview cyber-preview"><i></i><i></i><i></i></span><strong>霓虹夜送</strong><small>试玩开放 · 纯外观</small></button>
+      </div>
+    </section>
+  </div>
+
+  <div id="levelModal" class="modal-backdrop" hidden>
+    <section class="modal result-modal pixel-frame" role="dialog" aria-modal="true">
+      <div class="result-star">★</div>
+      <p class="modal-kicker">SHIFT COMPLETE</p>
+      <h2>这一班全部送达！</h2>
+      <p id="resultText">完成了 3 单配送</p>
+      <div class="result-stats"><span><small>本班收入</small><strong>¥<b id="shiftIncome">0</b></strong></span><span><small>过关奖励</small><strong>¥<b id="levelReward">15</b></strong></span></div>
+      <button id="nextLevelButton" class="primary-button">继续下一班</button>
+      <button id="resultShareButton" class="secondary-button">把成绩发给朋友</button>
+    </section>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
