@@ -12,6 +12,20 @@ python3 -m http.server 8000
 
 然后打开 <http://localhost:8000>。
 
+发布到静态网站时，请一次上传以下文件，并最后上传 `index.html`：
+
+```text
+index.html
+styles.css
+game.js
+game-core.js
+web-platform.js
+renderer.js
+web-game.js
+```
+
+`game.js` 是轻量启动器，会按顺序加载其余脚本并绕过旧缓存；不要只替换其中一个 JavaScript 文件。
+
 ## 核心操作
 
 - 手机游戏主界面固定为单屏：订单、天空、手持信息、背包和操作栏始终同时可见，不需要上下滚动。
@@ -59,3 +73,13 @@ python3 -m http.server 8000
 - 暖阳与赛博两套纯外观主题
 - 本地进度保存和浏览器分享
 - 桌面与手机响应式布局
+
+## 微信小游戏迁移准备
+
+- `game-core.js` 是不依赖网页 DOM 的共享规则核心：食物、形状、配方、交单等级、10关配置和每日挑战都在这里维护。
+- `web-platform.js` 负责网页版存档、分享、剪贴板、震动和前后台切换。
+- `wechat-platform.js` 提供同一套微信 API 适配接口，后续 Canvas 微信小游戏可直接复用。
+- `web-game.js` 保留当前网页版的界面与操作，`renderer.js` 负责 Canvas 天空、背包和拖动渲染。
+- 运行 `node --test tests/game-core.test.js` 可验证配方、越级交单、基础材料、关卡与每日挑战规则。
+
+当前完成的是共享核心和平台层，网页版玩法不变；下一阶段仍需把剩余 DOM 界面迁到全 Canvas，并建立可在微信开发者工具直接打开的小游戏工程。
